@@ -6,7 +6,7 @@ import '../providers/energy_data_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../widgets/status_pill.dart';
-import 'mqtt_settings_screen.dart';
+import 'esp_api_settings_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -67,20 +67,22 @@ class ProfileScreen extends StatelessWidget {
             children: [
               GestureDetector(
                 onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const MqttSettingsScreen()),
+                  MaterialPageRoute(
+                    builder: (_) => const EspApiSettingsScreen(),
+                  ),
                 ),
                 child: Consumer<EnergyDataProvider>(
                   builder: (context, provider, _) => _SettingTile(
                     icon: Icons.hub_outlined,
-                    label: 'Koneksi MQTT',
+                    label: 'Koneksi API ESP',
                     subtitle: provider.connected
-                        ? provider.connectedHost
+                        ? provider.connectedEndpoint.toString()
                         : provider.demoMode
-                            ? 'Mode demo · isi broker untuk konek ke ESP'
-                            : 'Belum terhubung',
+                            ? 'Mode demo · hubungkan ke hotspot ESP'
+                            : provider.error ?? 'Koneksi API terputus',
                     trailing: provider.connecting
                         ? const StatusPill(
-                            label: 'Menghubung',
+                            label: 'Menghubungkan',
                             tone: PillTone.info,
                           )
                         : provider.connected
@@ -89,17 +91,22 @@ class ProfileScreen extends StatelessWidget {
                                 tone: PillTone.success,
                                 icon: Icons.check_rounded,
                               )
-                            : const StatusPill(
-                                label: 'Demo',
-                                tone: PillTone.warning,
-                              ),
+                            : provider.demoMode
+                                ? const StatusPill(
+                                    label: 'Demo',
+                                    tone: PillTone.warning,
+                                  )
+                                : const StatusPill(
+                                    label: 'Error',
+                                    tone: PillTone.critical,
+                                  ),
                   ),
                 ),
               ),
               _SettingTile(
                 icon: Icons.cloud_sync_outlined,
                 label: 'Sinkronisasi data',
-                subtitle: 'Publish sensor tiap 1 detik',
+                subtitle: 'Ambil data API setiap 5 detik',
                 trailing: const StatusPill(
                   label: 'Aktif',
                   tone: PillTone.success,

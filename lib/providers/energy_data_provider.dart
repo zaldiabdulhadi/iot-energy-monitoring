@@ -3,28 +3,33 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
-import '../config/energy_topics.dart';
 import '../models/energy_device.dart';
-import '../services/mqtt_client_factory.dart';
-import '../services/mqtt_connection.dart';
+import '../models/energy_reading.dart';
+import '../services/energy_api_client.dart';
+import '../services/energy_recorder.dart';
 
-/// Sumber data aktif saat ini.
-enum DataSource { demo, mqtt }
+enum DataSource { demo, api }
 
-/// Sumber data energi realtime.
-///
-/// - Mode [DataSource.demo]: simulasi dummy berjalan otomatis (timer 1 detik)
-///   sehingga UI langsung terlihat hidup tanpa broker.
-/// - Mode [DataSource.mqtt]: nilai dibaca dari topic MQTT (PZEM-004T).
-///   Nilai yang belum tersedia di broker otomatis di-*fallback* ke nilai
-///   simulasi terakhir, jadi layar tidak pernah kosong saat connect.
 class EnergyDataProvider extends ChangeNotifier {
-  MqttConnection? _connection;
-  StreamSubscription<Map<String, String>>? _dataSub;
-  Timer? _demoTimer;
+  EnergyDataProvider({
+    EnergyApiClient? apiClient,
+    this.pollInterval = const Duration(seconds: 5),
+    this.recorder,
+  }) : _apiClient = apiClient ?? EnergyApiClient();
 
+  final EnergyApiClient _apiClient;
+  final EnergyRecorder? recorder;
+  final Duration pollInterval;
+  final math.Random _rng = math.Random(42);
+
+  Timer? _demoTimer;
+  Timer? _pollTimer;
+  bool _pollInFlight = false;
   DataSource _source = DataSource.demo;
   DataSource get source => _source;
+
+  EnergyReading? _reading;
+  Uri? _endpoint;
 
   bool _connected = false;
   bool get connected => _connected;
@@ -35,39 +40,80 @@ class EnergyDataProvider extends ChangeNotifier {
   String? _error;
   String? get error => _error;
 
-  String? _connectedHost;
-  String? get connectedHost => _connectedHost;
+  Uri? _connectedEndpoint;
+  Uri? get connectedEndpoint => _connectedEndpoint;
+
+  Uri? get endpoint => _endpoint;
 
   DateTime? _connectedSince;
   DateTime? get connectedSince => _connectedSince;
 
-  bool get demoMode => _source == DataSource.demo;
+  DateTime? _lastUpdated;
+  DateTime? get lastUpdated => _lastUpdated;
 
-  final math.Random _rng = math.Random(42);
+  bool get demoMode => _source == DataSource.demo;
 
   double _demoKw = 1.24;
   double _voltage = 220.4;
   double _frequency = 50.02;
   double _powerFactor = 0.94;
   double _energyKwh = 8.6;
-  double _solarKw = 1.86;
+  double _demoSolarKw = 1.86;
   double _peakKw = 2.1;
 
-  final Map<String, String> _mqttValues = {};
-  final List<double> _usageHistory = <double>[0.42, 0.38, 0.35, 0.33, 0.34, 0.40, 0.55, 0.72, 0.68, 0.61, 0.58, 0.64, 0.95, 1.10, 1.05, 0.98, 0.90, 0.84, 0.88, 1.02, 1.24, 1.10, 0.82, 0.56];
+  final List<double> _usageHistory = <double>[
+    0.42,
+    0.38,
+    0.35,
+    0.33,
+    0.34,
+    0.40,
+    0.55,
+    0.72,
+    0.68,
+    0.61,
+    0.58,
+    0.64,
+    0.95,
+    1.10,
+    1.05,
+    0.98,
+    0.90,
+    0.84,
+    0.88,
+    1.02,
+    1.24,
+    1.10,
+    0.82,
+    0.56,
+  ];
 
-  final List<EnergyDevice> _devices = EnergyDevice.seedData.map((d) => d.copyWith()).toList();
+  final List<EnergyDevice> _devices = EnergyDevice.seedData
+      .map((device) => device.copyWith())
+      .toList();
   List<EnergyDevice> get devices => List.unmodifiable(_devices);
 
   List<double> get usageHistory => List.unmodifiable(_usageHistory);
 
-  double get currentKw => _liveOrDemo(EnergyTopics.power, _demoKw, scale: 1 / 1000);
-  double get voltage => _liveOrDemo(EnergyTopics.voltage, _voltage);
-  double get current => _liveOrDemo(EnergyTopics.current, currentKw * 1000 / voltage, scale: 1);
-  double get energyToday => _liveOrDemo(EnergyTopics.energy, _energyKwh);
-  double get frequency => _liveOrDemo(EnergyTopics.frequency, _frequency);
-  double get powerFactor => _liveOrDemo(EnergyTopics.powerFactor, _powerFactor);
-  double get solarKw => _liveOrDemo(EnergyTopics.solarPower, _solarKw, scale: 1 / 1000);
+  double get currentKw => _source == DataSource.api && _reading != null
+      ? _reading!.power / 1000
+      : _demoKw;
+  double get voltage => _source == DataSource.api && _reading != null
+      ? _reading!.voltage
+      : _voltage;
+  double get current => _source == DataSource.api && _reading != null
+      ? _reading!.current
+      : currentKw * 1000 / voltage;
+  double get energyToday => _source == DataSource.api && _reading != null
+      ? _reading!.energy
+      : _energyKwh;
+  double get frequency => _source == DataSource.api && _reading != null
+      ? _reading!.frequency
+      : _frequency;
+  double get powerFactor => _source == DataSource.api && _reading != null
+      ? _reading!.powerFactor
+      : _powerFactor;
+  double get solarKw => _source == DataSource.api ? 0 : _demoSolarKw;
   double get peakToday => math.max(_peakKw, currentKw);
 
   bool get isStable =>
@@ -77,17 +123,8 @@ class EnergyDataProvider extends ChangeNotifier {
       frequency >= 49.5 &&
       frequency <= 50.5;
 
-  double _liveOrDemo(String topic, double demoValue, {double scale = 1}) {
-    final raw = _mqttValues[topic];
-    if (raw != null) {
-      final parsed = double.tryParse(raw);
-      if (parsed != null) return parsed * scale;
-    }
-    return demoValue;
-  }
-
-  /// Memulai simulasi dummy. Dipanggil sekali saat app dibuka.
   void startDemo() {
+    if (_source != DataSource.demo) return;
     _demoTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
       _tickDemo();
       notifyListeners();
@@ -98,16 +135,18 @@ class EnergyDataProvider extends ChangeNotifier {
     _demoKw = (_demoKw + (_rng.nextDouble() - 0.5) * 0.16)
         .clamp(0.5, 2.8)
         .toDouble();
-    _voltage = (220.4 + (_rng.nextDouble() - 0.5) * 4.8).clamp(212, 229).toDouble();
+    _voltage = (220.4 + (_rng.nextDouble() - 0.5) * 4.8)
+        .clamp(212, 229)
+        .toDouble();
     _frequency = 50 + (_rng.nextDouble() - 0.5) * 0.1;
     _powerFactor = 0.93 + _rng.nextDouble() * 0.04;
     _energyKwh += _demoKw * (1 / 3600);
-    _solarKw = (1.2 + math.sin(DateTime.now().millisecondsSinceEpoch / 60000) * 0.7)
-        .clamp(0.2, 2.4)
-        .toDouble();
+    _demoSolarKw =
+        (1.2 + math.sin(DateTime.now().millisecondsSinceEpoch / 60000) * 0.7)
+            .clamp(0.2, 2.4)
+            .toDouble();
 
     _pushHistory();
-
     _syncDevicePowers();
   }
 
@@ -128,91 +167,116 @@ class EnergyDataProvider extends ChangeNotifier {
     };
 
     final totalBase = _devices
-        .where((d) => d.isOn)
-        .fold(0.0, (sum, d) => sum + (baseByDevice[d.id] ?? 0));
+        .where((device) => device.isOn)
+        .fold(0.0, (sum, device) => sum + (baseByDevice[device.id] ?? 0));
 
-    final reference = _source == DataSource.demo ? _demoKw : currentKw;
-    final factor = totalBase > 0 ? (reference / totalBase).clamp(0.3, 2.2) : 1.0;
+    final factor = totalBase > 0
+        ? (currentKw / totalBase).clamp(0.3, 2.2)
+        : 1.0;
 
     for (var i = 0; i < _devices.length; i++) {
-      final d = _devices[i];
-      if (d.id == 'dev_06') {
-        _devices[i] = d.copyWith(
-          isOn: true,
-          powerDrawKw: -solarKw,
-        );
+      final device = _devices[i];
+      if (device.id == 'dev_06') {
+        _devices[i] = device.copyWith(isOn: true, powerDrawKw: -solarKw);
         continue;
       }
-      if (!d.isOn) {
-        _devices[i] = d.copyWith(powerDrawKw: 0);
+      if (!device.isOn) {
+        _devices[i] = device.copyWith(powerDrawKw: 0);
         continue;
       }
-      final base = baseByDevice[d.id] ?? 0.02;
+      final base = baseByDevice[device.id] ?? 0.02;
       final noise = 1 + (_rng.nextDouble() - 0.5) * 0.1;
-      _devices[i] = d.copyWith(
+      _devices[i] = device.copyWith(
         powerDrawKw: (base * factor * noise).clamp(0.0, 3.0),
       );
     }
   }
 
-  Future<void> connect({
-    required String host,
-    required int port,
-    required String username,
-    required String password,
-  }) async {
+  Future<void> connect({Uri? endpoint}) async {
     if (_connecting) return;
 
-    if (_connected) {
+    final target = endpoint ?? _endpoint ?? EnergyApiClient.defaultEndpoint;
+    if (_connected || _pollTimer != null) {
       await disconnect();
     }
 
     _connecting = true;
     _error = null;
+    _endpoint = target;
     notifyListeners();
 
-    _connection = createMqttConnection();
-    _dataSub = _connection!.dataStream.listen((latest) {
-      _applyLatest(latest);
-    });
-
-    await _connection!.connect(
-      host: host,
-      port: port,
-      username: username,
-      password: password,
-    );
-
-    _connected = _connection!.connected;
-    _connecting = false;
-    _error = _connection!.lastError;
-
-    if (_connected) {
-      _source = DataSource.mqtt;
-      _connectedHost = host;
+    try {
+      final reading = await _apiClient.fetch(target);
+      _source = DataSource.api;
+      _applyReading(reading);
+      _connected = true;
+      _connectedEndpoint = target;
       _connectedSince = DateTime.now();
-    } else {
-      _connection = null;
+      _demoTimer?.cancel();
+      _demoTimer = null;
+      _startPolling();
+    } on EnergyApiException catch (error) {
+      _connected = false;
+      _connectedEndpoint = null;
+      _connectedSince = null;
+      _error = error.message;
+    } catch (_) {
+      _connected = false;
+      _connectedEndpoint = null;
+      _connectedSince = null;
+      _error = 'Terjadi kesalahan saat membaca API ESP.';
+    } finally {
+      _connecting = false;
+      notifyListeners();
     }
-    notifyListeners();
   }
 
-  void _applyLatest(Map<String, String> latest) {
-    for (final topic in EnergyTopics.all) {
-      final raw = latest[topic];
-      if (raw == null || raw == '--') continue;
-      final parsed = double.tryParse(raw);
-      if (parsed != null) {
-        _mqttValues[topic] = raw;
-      }
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(pollInterval, (_) => _poll());
+  }
+
+  Future<void> _poll() async {
+    if (_pollInFlight || _source != DataSource.api || _endpoint == null) return;
+    _pollInFlight = true;
+
+    try {
+      final reading = await _apiClient.fetch(_endpoint!);
+      _applyReading(reading);
+      _connected = true;
+      _connectedEndpoint = _endpoint;
+      _error = null;
+      _connectedSince ??= DateTime.now();
+    } on EnergyApiException catch (error) {
+      _connected = false;
+      _connectedEndpoint = null;
+      _connectedSince = null;
+      _error = error.message;
+    } catch (_) {
+      _connected = false;
+      _connectedEndpoint = null;
+      _connectedSince = null;
+      _error = 'Terjadi kesalahan saat memperbarui data API ESP.';
+    } finally {
+      _pollInFlight = false;
+      notifyListeners();
     }
+  }
+
+  void _applyReading(EnergyReading reading) {
+    _reading = reading;
+    _lastUpdated = DateTime.now();
     _pushHistory();
     _syncDevicePowers();
-    notifyListeners();
+    recorder?.record(reading, now: _lastUpdated);
+  }
+
+  Future<void> persistPendingHistory() async {
+    await recorder?.flush();
   }
 
   void setDeviceOn(String id, bool value) {
-    final index = _devices.indexWhere((d) => d.id == id);
+    final index = _devices.indexWhere((device) => device.id == id);
     if (index == -1) return;
     _devices[index] = _devices[index].copyWith(isOn: value);
     _syncDevicePowers();
@@ -220,27 +284,29 @@ class EnergyDataProvider extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
-    await _dataSub?.cancel();
-    _dataSub = null;
-    if (_connection != null) {
-      await _connection!.disconnect();
-      _connection = null;
-    }
+    await persistPendingHistory();
+    recorder?.reset();
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _pollInFlight = false;
     _connected = false;
     _connecting = false;
-    _connectedHost = null;
+    _connectedEndpoint = null;
     _connectedSince = null;
+    _lastUpdated = null;
+    _reading = null;
+    _endpoint = null;
+    _error = null;
     _source = DataSource.demo;
-    _mqttValues.clear();
+    startDemo();
     notifyListeners();
   }
 
   @override
   void dispose() {
     _demoTimer?.cancel();
-    _demoTimer = null;
-    _dataSub?.cancel();
-    _connection?.disconnect();
+    _pollTimer?.cancel();
+    _apiClient.close();
     super.dispose();
   }
 }

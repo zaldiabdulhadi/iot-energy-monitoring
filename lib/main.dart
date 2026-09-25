@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'data/local/app_database.dart';
 
-void main() {
-  runApp(const SmartEnergyApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final database = EnergyDatabase();
+  runApp(SmartEnergyApp(database: database));
 }

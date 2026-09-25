@@ -32,7 +32,7 @@ class DashboardScreen extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: SectionHeader(
               title: 'Penggunaan Real-time',
-              action: provider.connected ? 'Live · MQTT' : 'Demo · ${_f.format(provider.currentKw)} kW',
+              action: provider.connected ? 'Live · API' : 'Demo · ${_f.format(provider.currentKw)} kW',
             ),
           ),
           const SizedBox(height: 12),
@@ -90,7 +90,7 @@ class DashboardScreen extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   provider.connected
-                      ? 'Data realtime dari PZEM via MQTT'
+                      ? 'Data realtime dari PZEM via API ESP'
                       : 'Simulasi energi aktif · ${provider.isStable ? 'kualitas daya stabil' : 'ada fluktuasi'}',
                   style: textTheme.bodySmall?.copyWith(
                     color: AppColors.textMuted,
