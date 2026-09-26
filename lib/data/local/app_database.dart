@@ -10,14 +10,16 @@ import 'app_tables.dart';
 
 part 'app_database.g.dart';
 
-@DriftDatabase(tables: [LocalDevices, MinuteAggregates, HourlyQueue])
+@DriftDatabase(
+  tables: [LocalDevices, MinuteAggregates, HourlyHistory, HourlyQueue],
+)
 class EnergyDatabase extends _$EnergyDatabase {
   EnergyDatabase() : super(driftDatabase(name: 'smart_energy'));
 
   EnergyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -26,6 +28,27 @@ class EnergyDatabase extends _$EnergyDatabase {
           if (from < 2) {
             await m.addColumn(hourlyQueue, hourlyQueue.nextAttemptAt);
             await m.createIndex(hourlyQueueDueIdx);
+          }
+          if (from < 3) {
+            // Riwayat dipisah dari antrean supaya pruning tidak ikut menghapus
+            // data historis. Baris lama di `hourly_queue` yang masih ada ikut
+            // dicadangkan supaya riwayat tidak mulai dari nol setelah upgrade.
+            await m.createTable(hourlyHistory);
+            await m.createIndex(hourlyHistoryBucketIdx);
+            await customStatement(
+              'INSERT INTO hourly_history (device_key, hour_start, energy_kwh, '
+              'power_sum, power_min, power_max, voltage_sum, voltage_min, '
+              'voltage_max, current_sum, current_max, frequency_sum, '
+              'frequency_min, frequency_max, power_factor_sum, '
+              'power_factor_min, sample_count, observed_seconds, '
+              'estimated_intervals, coverage_pct, data_quality, recorded_at) '
+              'SELECT device_key, hour_start, energy_kwh, power_sum, power_min, '
+              'power_max, voltage_sum, voltage_min, voltage_max, current_sum, '
+              'current_max, frequency_sum, frequency_min, frequency_max, '
+              'power_factor_sum, power_factor_min, sample_count, '
+              'observed_seconds, estimated_intervals, coverage_pct, '
+              'data_quality, updated_at FROM hourly_queue',
+            );
           }
         },
         beforeOpen: (details) async {
@@ -185,6 +208,98 @@ class EnergyDatabase extends _$EnergyDatabase {
         .go();
   }
 
+  /// Menyimpan satu jam ke riwayat permanen.
+  ///
+  /// Dipanggil bersama [upsertHourly] di penutup jam: keduanya menulis data
+  /// yang sama, tapi ke tabel dengan umur yang berbeda.
+  Future<void> upsertHistory({
+    required EnergyHourly hourly,
+    required DateTime now,
+  }) async {
+    await into(hourlyHistory).insertOnConflictUpdate(
+      HourlyHistoryCompanion(
+        deviceKey: Value(hourly.deviceKey),
+        hourStart: Value(toStorage(hourly.hourStart)),
+        energyKwh: Value(hourly.energyKwh),
+        powerSum: Value(hourly.powerSum),
+        powerMin: Value(hourly.powerMin),
+        powerMax: Value(hourly.powerMax),
+        voltageSum: Value(hourly.voltageSum),
+        voltageMin: Value(hourly.voltageMin),
+        voltageMax: Value(hourly.voltageMax),
+        currentSum: Value(hourly.currentSum),
+        currentMax: Value(hourly.currentMax),
+        frequencySum: Value(hourly.frequencySum),
+        frequencyMin: Value(hourly.frequencyMin),
+        frequencyMax: Value(hourly.frequencyMax),
+        powerFactorSum: Value(hourly.powerFactorSum),
+        powerFactorMin: Value(hourly.powerFactorMin),
+        sampleCount: Value(hourly.sampleCount),
+        observedSeconds: Value(hourly.observedSeconds),
+        estimatedIntervals: Value(hourly.estimatedIntervals),
+        coveragePct: Value(hourly.coveragePct),
+        dataQuality: Value(hourly.quality.wireName),
+        recordedAt: Value(toStorage(now)),
+      ),
+    );
+  }
+
+  /// Membaca riwayat dalam rentang setengah terbuka `[from, to)`.
+  ///
+  /// Berbeda dengan [hourlyBetween] yang membaca antrean, ini tidak terpengaruh
+  /// [pruneSynced] dan jadi sumber angka untuk layar Analisis.
+  Future<List<EnergyHourly>> historyBetween(
+    String deviceKey,
+    DateTime from,
+    DateTime to,
+  ) async {
+    final rows = await (select(hourlyHistory)
+          ..where(
+            (t) =>
+                t.deviceKey.equals(deviceKey) &
+                t.hourStart.isBiggerOrEqualValue(toStorage(from)) &
+                t.hourStart.isSmallerThanValue(toStorage(to)),
+          )
+          ..orderBy([(t) => OrderingTerm(expression: t.hourStart)]))
+        .get();
+    return rows.map((row) => row.toDomain()).toList();
+  }
+
+  /// Rentang waktu yang benar-benar punya baris di riwayat.
+  ///
+  /// Dipakai supaya ringkasan periode bisa melompati periode kosong di awal
+  /// pemakaian, alih-alih melaporkan nol sementara.
+  Future<(DateTime?, DateTime?)> historyBounds(String deviceKey) async {
+    final earliest = hourlyHistory.hourStart.min();
+    final latest = hourlyHistory.hourStart.max();
+    final row = await (selectOnly(hourlyHistory)
+          ..addColumns([earliest, latest])
+          ..where(hourlyHistory.deviceKey.equals(deviceKey)))
+        .getSingle();
+    return (
+      row.read(earliest) == null ? null : fromStorage(row.read(earliest)!),
+      row.read(latest) == null ? null : fromStorage(row.read(latest)!),
+    );
+  }
+
+  /// Tarif dan faktor karbon milik perangkat ini.
+  ///
+  /// Nilai default di [_defaultDeviceSettings] dipakai kalau baris perangkat
+  /// belum pernah dibuat, supaya analisis tetap bisa jalan sebelum sinkronisasi
+  /// pertama.
+  Future<DeviceSettings> currentSettings() async {
+    final id = await currentDeviceId();
+    if (id == null) return DeviceSettings._defaultDeviceSettings;
+    final row = await (select(localDevices)
+          ..where((t) => t.localId.equals(id)))
+        .getSingleOrNull();
+    if (row == null) return DeviceSettings._defaultDeviceSettings;
+    return DeviceSettings(
+      tariffPerKwh: row.tariffPerKwh,
+      gridCo2KgPerKwh: row.gridCo2KgPerKwh,
+    );
+  }
+
   Future<List<EnergyHourly>> hourlyBetween(
     String deviceKey,
     DateTime from,
@@ -337,6 +452,53 @@ String generateLocalId() {
   final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
       '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+}
+
+/// Parameter turunan yang dipakai untuk mengubah energi menjadi rupiah dan CO₂.
+///
+/// Disimpan per perangkat di `local_devices` (dan ikut terunggah ke tabel
+/// `devices`) supaya biaya yang ditampilkan mengikuti tarif yang benar-benar
+/// berlaku, bukan konstanta yang tertanam di layar.
+class DeviceSettings {
+  const DeviceSettings({
+    required this.tariffPerKwh,
+    required this.gridCo2KgPerKwh,
+  });
+
+  /// Nilai yang sama dengan default kolom di [LocalDevices].
+  static const _defaultDeviceSettings = DeviceSettings(
+    tariffPerKwh: 1650,
+    gridCo2KgPerKwh: 0.42,
+  );
+
+  final double tariffPerKwh;
+  final double gridCo2KgPerKwh;
+}
+
+extension HourlyHistoryRowMapper on HourlyHistoryRow {
+  EnergyHourly toDomain() => EnergyHourly(
+        deviceKey: deviceKey,
+        hourStart: fromStorage(hourStart),
+        energyKwh: energyKwh,
+        powerSum: powerSum,
+        powerMin: powerMin,
+        powerMax: powerMax,
+        voltageSum: voltageSum,
+        voltageMin: voltageMin,
+        voltageMax: voltageMax,
+        currentSum: currentSum,
+        currentMax: currentMax,
+        frequencySum: frequencySum,
+        frequencyMin: frequencyMin,
+        frequencyMax: frequencyMax,
+        powerFactorSum: powerFactorSum,
+        powerFactorMin: powerFactorMin,
+        sampleCount: sampleCount,
+        observedSeconds: observedSeconds,
+        estimatedIntervals: estimatedIntervals,
+        coveragePct: coveragePct,
+        quality: EnergyDataQuality.fromWire(dataQuality),
+      );
 }
 
 extension HourlyQueueRowMapper on HourlyQueueRow {

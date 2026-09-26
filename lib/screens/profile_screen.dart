@@ -1,67 +1,56 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/energy_data_provider.dart';
+import '../providers/energy_history_provider.dart';
 import '../providers/sync_status_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../widgets/layout.dart';
+import '../widgets/metric_tile.dart';
 import '../widgets/status_pill.dart';
 import 'esp_api_settings_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
 
-  static final _f = NumberFormat.decimalPattern('id');
-
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final gutters = Gutters.of(context);
 
-    return Scaffold(
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-        children: [
-          Text(
-            'Profil',
-            style: textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w700,
+    return ListView(
+      padding: gutters.all,
+      children: [
+        Text(
+          'Profil',
+          style: textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 18),
+        _buildProfileCard(textTheme),
+        const SizedBox(height: 20),
+        _buildUsageCard(),
+        const SizedBox(height: 20),
+        // Tidak ada penyimpanan preferensi di aplikasi ini, jadi baris di sini
+        // hanya menampilkan nilai yang benar-benar berlaku. Menampilkan sakelar
+        // atau tanda panah untuk sesuatu yang tidak bisa dibuka akan menyesatkan.
+        _settingsGroup(
+          title: 'Umum',
+          children: [
+            _SettingTile(
+              icon: Icons.language_rounded,
+              label: 'Bahasa',
+              subtitle: 'Bahasa Indonesia',
             ),
-          ),
-          const SizedBox(height: 18),
-          _buildProfileCard(textTheme),
-          const SizedBox(height: 20),
-          _buildBillingCard(),
-          const SizedBox(height: 20),
-          _settingsGroup(
-            title: 'Umum',
-            children: [
-              _SettingTile(
-                icon: Icons.notifications_none_rounded,
-                label: 'Notifikasi',
-                subtitle: 'Alarm beban, tagihan & tips hemat',
-                trailing: Switch(value: true, onChanged: (_) {}),
-              ),
-              _SettingTile(
-                icon: Icons.wifi_tethering_rounded,
-                label: 'Mode Hemat Daya',
-                subtitle: 'Optimasi otomatis perangkat aktif',
-                trailing: Switch(value: false, onChanged: (_) {}),
-              ),
-              _SettingTile(
-                icon: Icons.language_rounded,
-                label: 'Bahasa',
-                subtitle: 'Bahasa Indonesia',
-                trailing: _chevron(),
-              ),
-              _SettingTile(
-                icon: Icons.straighten_rounded,
-                label: 'Satuan energi',
-                subtitle: 'kWh · Rupiah',
-                trailing: _chevron(),
-              ),
-            ],
-          ),
+            _SettingTile(
+              icon: Icons.straighten_rounded,
+              label: 'Satuan energi',
+              subtitle: 'kWh · Rupiah',
+            ),
+          ],
+        ),
           const SizedBox(height: 20),
           _settingsGroup(
             title: 'Koneksi & Info',
@@ -106,31 +95,23 @@ class ProfileScreen extends StatelessWidget {
               ),
               _SyncTile(),
               _SettingTile(
-                icon: Icons.help_outline_rounded,
-                label: 'Pusat bantuan',
-                trailing: _chevron(),
-              ),
-              _SettingTile(
                 icon: Icons.info_outline_rounded,
                 label: 'Tentang Smart Energy',
-                subtitle: 'v1.0.0',
-                trailing: _chevron(),
+                subtitle: 'v1.0.0 · aplikasi pemantau listrik ESP',
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          FilledButton(
-            onPressed: () {},
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.textPrimary,
-            ),
-            child: const Text('Keluar'),
-          ),
-        ],
-      ),
+        const SizedBox(height: 8),
+      ],
     );
   }
 
+  /// Kartu identitas aplikasi.
+  ///
+  /// Tidak ada login di aplikasi ini, jadi nama dan alamat penghuni tidak
+  /// ditampilkan: mengarang identitas hanya membuat pengguna mengira datanya
+  /// milik-premises tertentu. Yang ditampilkan adalah sumber data yang
+  /// sebenarnya sedang dipakai.
   Widget _buildProfileCard(TextTheme textTheme) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -148,19 +129,17 @@ class ProfileScreen extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 60,
-                height: 60,
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
                   color: AppColors.primaryDark,
                   borderRadius: BorderRadius.circular(18),
                 ),
                 alignment: Alignment.center,
-                child: Text(
-                  'A',
-                  style: textTheme.headlineSmall?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
+                child: Icon(
+                  Icons.bolt_rounded,
+                  size: 30,
+                  color: Colors.white,
                 ),
               ),
               const SizedBox(width: 14),
@@ -169,159 +148,101 @@ class ProfileScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Alex Nugraha',
+                      'Smart Energy',
                       style: textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                         color: AppColors.deepGreen,
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.home_rounded,
-                          size: 14,
-                          color: AppColors.textSecondary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Rumah Asri Residence · Blok C12',
-                          style: textTheme.bodySmall?.copyWith(
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const StatusPill(
-                label: 'Premium',
-                tone: PillTone.info,
-                icon: Icons.workspace_premium_rounded,
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _profileStat(value: '8,6', unit: 'kWh', label: 'Rata-rata harian'),
-              _profileStat(value: 'Rp 486k', unit: '/bulan', label: 'Estimasi tagihan'),
-              _profileStat(value: '6', unit: 'unit', label: 'Perangkat'),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _profileStat({
-    required String value,
-    required String unit,
-    required String label,
-  }) {
-    return Expanded(
-      child: Column(
-        children: [
-          Text.rich(
-            TextSpan(
-              text: value,
-              style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                color: AppColors.deepGreen,
-              ),
-              children: [
-                TextSpan(
-                  text: ' $unit',
-                  style: const TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 10,
-              color: AppColors.textMuted,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBillingCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
-        boxShadow: AppTheme.softShadow,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: AppColors.primaryLight,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(
-              Icons.receipt_long_rounded,
-              color: AppColors.primaryDark,
-              size: 23,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Tagihan ${_f.format(416)}',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.event_available_rounded,
-                      size: 13,
-                      color: AppColors.success,
-                    ),
-                    const SizedBox(width: 4),
-                    const Text(
-                      'Jatuh tempo 10 Okt · sudah dibayar',
-                      style: TextStyle(
-                        fontSize: 11,
+                    Text(
+                      'Pemantau listrik ESP',
+                      style: textTheme.bodySmall?.copyWith(
                         color: AppColors.textSecondary,
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const Icon(
-            Icons.chevron_right_rounded,
-            color: AppColors.textMuted,
+              ),
+              const _SourcePill(),
+            ],
           ),
         ],
       ),
+    );
+  }
+
+  /// Ringkasan konsumsi dari riwayat yang benar-benar terekam.
+  Widget _buildUsageCard() {
+    return Consumer<EnergyHistoryProvider>(
+      builder: (context, history, _) {
+        final summary = history.summary;
+
+        if (summary == null || history.isEmpty) {
+          return const AppCard(
+            child: Row(
+              children: [
+                Icon(Icons.hourglass_empty_rounded,
+                    size: 20, color: AppColors.textMuted),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Belum ada riwayat. Konsumsi harian dan mingguan muncul '
+                    'setelah jam-jam pertama terekam.',
+                    style: TextStyle(
+                        fontSize: 11.5, color: AppColors.textMuted),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final days = summary.period.span.inDays;
+        return AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                days > 1
+                    ? 'Konsumsi ${summary.period.label.toLowerCase()}'
+                    : 'Konsumsi hari ini',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              const SizedBox(height: 10),
+              AdaptiveNumber(
+                value: formatValue(summary.totalKwh, 2),
+                suffix: 'kWh',
+                fontSize: 28,
+                color: AppColors.deepGreen,
+              ),
+              const SizedBox(height: 12),
+              MetricGrid(
+                tiles: [
+                  SummaryTile(
+                    label: 'Estimasi biaya',
+                    value: formatValue(summary.cost, 0),
+                    suffix: 'Rp',
+                    icon: Icons.payments_outlined,
+                    caption: 'tarif ${formatValue(summary.tariffPerKwh, 0)}/kWh',
+                  ),
+                  SummaryTile(
+                    label: 'Data terekam',
+                    value: '${summary.observedHours}',
+                    suffix: 'jam',
+                    icon: Icons.schedule_rounded,
+                    caption: 'dari ${summary.expectedHours} jam',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -367,24 +288,23 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _chevron() => const Icon(
-        Icons.chevron_right_rounded,
-        color: AppColors.textMuted,
-      );
 }
 
 class _SettingTile extends StatelessWidget {
   const _SettingTile({
     required this.icon,
     required this.label,
-    required this.trailing,
+    this.trailing,
     this.subtitle,
   });
 
   final IconData icon;
   final String label;
   final String? subtitle;
-  final Widget trailing;
+
+  /// Widget di kanan baris. Kosong untuk baris yang informatif saja dan tidak
+  /// bisa diketuk.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -427,9 +347,45 @@ class _SettingTile extends StatelessWidget {
               ],
             ),
           ),
-          trailing,
+          // Trailing dibuat fleksibel supaya di layar sempit pill statusnya
+          // yang dipotong elipsis, bukan membuat baris meluber melewati tepi.
+          if (trailing != null) Flexible(child: trailing!),
         ],
       ),
+    );
+  }
+}
+
+/// Menampilkan sumber data yang sedang aktif, jadi pengguna selalu tahu angka
+/// di layar berasal dari meter sungguhan atau dari simulasi.
+class _SourcePill extends StatelessWidget {
+  const _SourcePill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<EnergyDataProvider>(
+      builder: (context, provider, _) {
+        if (provider.connecting) {
+          return const StatusPill(
+            label: 'Menghubungkan',
+            tone: PillTone.info,
+          );
+        }
+        if (provider.connected) {
+          return const StatusPill(
+            label: 'Live',
+            tone: PillTone.success,
+            icon: Icons.check_rounded,
+          );
+        }
+        if (provider.demoMode) {
+          return const StatusPill(
+            label: 'Demo',
+            tone: PillTone.warning,
+          );
+        }
+        return const StatusPill(label: 'Error', tone: PillTone.critical);
+      },
     );
   }
 }
@@ -474,10 +430,15 @@ class _SyncTile extends StatelessWidget {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              StatusPill(
-                label: sync.statusLabel,
-                tone: _toneOf(sync),
-                icon: sync.isSyncing ? Icons.sync_rounded : null,
+              // Pill dibuat fleksibel supaya tombol sinkronkan selalu punya
+              // ruang. Tanpa ini, label status yang panjang membuat seluruh
+              // baris meluber di layar sempit.
+              Flexible(
+                child: StatusPill(
+                  label: sync.statusLabel,
+                  tone: _toneOf(sync),
+                  icon: sync.isSyncing ? Icons.sync_rounded : null,
+                ),
               ),
               if (sync.isEnabled) ...[
                 const SizedBox(width: 4),

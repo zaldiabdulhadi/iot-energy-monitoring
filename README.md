@@ -12,14 +12,25 @@ ESP ──HTTP GET──► EnergyApiClient ──► EnergyDataProvider
                                     EnergyRecorder
                                           │ rollup 60 menit
                                           ▼
-                            minute_aggregates ──delete──► hourly_queue
-                                                              │ sync_state=pending
-                                                              ▼
+                            minute_aggregates
+                                          │
+                              ┌───────────┴───────────┐
+                              ▼                       ▼
+                      hourly_queue              hourly_history
+                      (antrean unggah)          (riwayat lokal)
+                              │ sync_state=pending
+                              ▼
                                               EnergySyncService
                                                               │ upsert batch
                                                               ▼
                                             Supabase / PostgREST
 ```
+
+`hourly_queue` dan `hourly_history` menerima data yang sama saat jam ditutup, tapi
+berumur berbeda: antrean bisa dipangkas setelah 30 hari (`pruneSynced`) karena
+salinannya sudah ada di server, sedangkan `hourly_history` tidak pernah dihapus
+dan menjadi sumber angka untuk layar Analisis. Karena itu `pruneSynced` tidak
+menyentuh tabel riwayat.
 
 Aplikasi bersifat **offline-first**: SQLite lokal (Drift) adalah sumber kebenaran
 saat perangkat tidak terhubung, dan Supabase hanya menerima salinan agregat per
@@ -29,9 +40,10 @@ jam. Menutup aplikasi tidak kehilangan data pengukuran.
 
 | Tabel lokal (Drift) | Tabel Supabase | Isi |
 |---|---|---|
-| `local_devices` | `devices` | Profil perangkat, endpoint, tarif, faktor CO2 |
+| `local_devices` | `devices` | Profil meter, endpoint, tarif, faktor CO2 |
 | `minute_aggregates` | *(tidak diunggah)* | Agregat per menit, dibuang setelah di-rollup |
 | `hourly_queue` | `energy_hourly` | Agregat per jam + status sinkronisasi |
+| `hourly_history` | `energy_hourly` | Salinan agregat per jam, tanpa umur, untuk analisis |
 
 Kolom *sync bookkeeping* (`sync_state`, `attempts`, `last_error`, `synced_at`)
 hanya ada di sisi lokal karena merupakan urusan device, bukan server. Di sisi
@@ -40,6 +52,31 @@ server ada `created_at`/`updated_at` yang dikelola trigger.
 Backward compatibility upsert dijamin oleh `uuid` devices yang dibuat client
 sebagai primary key, dan primary key komposit `(device_id, hour_start)` untuk
 `energy_hourly`.
+
+## Layar
+
+Tiga tab, tanpa tab "Perangkat": JSON ESP tidak memuat identitas perangkat,
+sehingga watt per perangkat hanya bisa berupa karangan.
+
+- **Dashboard** — enam metrik yang benar-benar dikirim ESP
+  (`voltage`, `current`, `power`, `energy`, `frequency`, `pf`), konsumsi 24 jam
+  terakhir, kualitas daya, rekomendasi, dan grafik daya lima menit terakhir.
+- **Analisis** — riwayat nyata per jam untuk jendela 24 jam, 7 hari, 30 hari,
+  dan 12 bulan terakhir; grafik konsumsi, grafik tiap parameter, tabel
+  rentang, dan rekomendasi yang dihitung dari angka itu.
+- **Profil** — sumber data yang sedang aktif, ringkasan konsumsi, status
+  sinkronisasi, dan konfigurasi API ESP.
+
+Semua angka berasal dari pengukuran. Kalau rentang periode belum punya cukup
+baris, layar menampilkan keadaan kosong beserta penjelasannya, bukan angka
+perkiraan. Biaya dan jejak karbon memakai tarif serta faktor CO2 dari
+`local_devices`, dan nilai tarifnya ikut ditampilkan agar asumsinya terlihat.
+
+### Mode demo
+
+Mode demo menyintesis enam metrik yang sama dan melewati pipeline pencatatan
+yang sama dengan data ESP, sehingga riwayat dan analisis tetap bisa dicoba tanpa
+meter terhubung. Badge "Demo" selalu terlihat selama mode ini aktif.
 
 ## Menjalankan
 
@@ -119,3 +156,15 @@ flutter test
 bukan lewat singleton global, sehingga seluruh jalur jaringan diuji dengan
 `MockClient` tanpa koneksi nyata. Perlu menyertakan `request` pada respons tiruan
 karena PostgREST membacanya untuk menentukan metode HTTP.
+
+Cakupan test:
+
+- `test/energy_metric_test.dart` — satuan metrik, klasifikasi batas, dan
+  konversi watt ke kW.
+- `test/energy_history_service_test.dart` — rentang periode, pembagian bucket
+  per jam/hari/bulan kalender, kelengkapan data, dan perbandingan periode.
+- `test/layout_test.dart` — ketiga tab pada lebar 320, 400, dan 600 dp tanpa
+  overflow, plus gutter, jumlah kolom, dan label bilah navigasi.
+- `test/energy_recorder_test.dart`, `test/energy_sync_service_test.dart`,
+  `test/energy_data_provider_test.dart`, `test/energy_api_client_test.dart` —
+  pencatatan, sinkronisasi, polling, dan parsing API.

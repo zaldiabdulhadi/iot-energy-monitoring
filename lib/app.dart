@@ -5,8 +5,10 @@ import 'package:provider/provider.dart';
 
 import 'data/local/app_database.dart';
 import 'providers/energy_data_provider.dart';
+import 'providers/energy_history_provider.dart';
 import 'providers/sync_status_provider.dart';
 import 'screens/home_shell.dart';
+import 'services/energy_history_service.dart';
 import 'services/energy_recorder.dart';
 import 'services/energy_sync_service.dart';
 import 'theme/app_theme.dart';
@@ -26,6 +28,7 @@ class SmartEnergyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sync = syncService ?? EnergySyncService(database: database);
+    final history = EnergyHistoryService(database: database);
 
     return MultiProvider(
       providers: [
@@ -43,6 +46,11 @@ class SmartEnergyApp extends StatelessWidget {
             service: sync,
             autoSyncInterval: const Duration(minutes: 5),
           )..startAutoSync(),
+        ),
+        // Ringkasan riwayat dimuat terpisah dari provider realtime supaya
+        // pembacaan tiap 5 detik tidak ikut memicu rebuild grafik Analisis.
+        ChangeNotifierProvider(
+          create: (_) => EnergyHistoryProvider(service: history)..load(),
         ),
       ],
       child: MaterialApp(

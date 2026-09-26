@@ -112,7 +112,11 @@ class EnergyRecorder {
         hourStart: bucket,
         rows: rows,
       );
+      // Dua tujuan dengan umur berbeda: antrean untuk diunggah ke Supabase dan
+      // riwayat permanen untuk dianalisis di aplikasi. Keduanya idempotent, jadi
+      // jam yang ter-rollup dua kali hanya memperbarui nilainya.
       await database.upsertHourly(hourly: hourly, now: timestamp);
+      await database.upsertHistory(hourly: hourly, now: timestamp);
       await database.deleteMinutesForHour(deviceKey, bucket);
       closed += 1;
     }

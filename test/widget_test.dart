@@ -27,7 +27,11 @@ void main() {
     await _pumpApp(tester);
 
     expect(find.text('Dashboard'), findsOneWidget);
-    expect(find.text('Perangkat'), findsOneWidget);
+    // Tab "Perangkat" dihapus: aplikasi hanya memantau satu meter ESP, jadi
+    // tidak ada lagi yang bisa dipilih di tab tersebut.
+    expect(find.text('Perangkat'), findsNothing);
+    expect(find.text('Analisis'), findsOneWidget);
+    expect(find.text('Profil'), findsOneWidget);
 
     await _disposeApp(tester);
   });

@@ -58,6 +58,8 @@ class AppTheme {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: AppColors.card,
+        // 72 cukup untuk ikon dan labelnya. Label disembunyikan di bawah
+        // 340 dp, bukan dipotong, jadi tinggi ini tidak membuat teks terpotong.
         height: 72,
         elevation: 0,
         indicatorColor: AppColors.primaryLight,

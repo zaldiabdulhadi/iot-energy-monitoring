@@ -4,7 +4,7 @@ import '../theme/app_colors.dart';
 
 enum PillTone { success, warning, critical, info, neutral }
 
-/// Small rounded status pill used for device / system indicators.
+/// Pill status kecil untuk indikator sumber data dan kondisi sistem.
 class StatusPill extends StatelessWidget {
   const StatusPill({
     super.key,
@@ -58,12 +58,19 @@ class StatusPill extends StatelessWidget {
             ),
             const SizedBox(width: 6),
           ],
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: _color,
+          // Label dipotong dengan elipsis, bukan memaksa pill melebar. Tanpa
+          // ini, pill di dalam baris yang sempit akan meluber melewati tepi
+          // kartu di layar 320 dp.
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _color,
+              ),
             ),
           ),
         ],

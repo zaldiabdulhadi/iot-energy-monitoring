@@ -3,13 +3,19 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
-import '../models/energy_device.dart';
+import '../models/energy_metric.dart';
 import '../models/energy_reading.dart';
 import '../services/energy_api_client.dart';
 import '../services/energy_recorder.dart';
+import '../services/recommendation_engine.dart';
 
 enum DataSource { demo, api }
 
+/// Sumber status realtime dari ESP.
+///
+/// Isinya hanya enam metrik yang benar-benar dikirim JSON ESP. Tidak ada data
+/// per perangkat: JSON itu tidak memuat identitas perangkat sama sekali, jadi
+/// memecahnya jadi "AC 0,86 kW" hanya bisa dilakukan dengan mengarang angka.
 class EnergyDataProvider extends ChangeNotifier {
   EnergyDataProvider({
     EnergyApiClient? apiClient,
@@ -20,7 +26,6 @@ class EnergyDataProvider extends ChangeNotifier {
   final EnergyApiClient _apiClient;
   final EnergyRecorder? recorder;
   final Duration pollInterval;
-  final math.Random _rng = math.Random(42);
 
   Timer? _demoTimer;
   Timer? _pollTimer;
@@ -57,143 +62,87 @@ class EnergyDataProvider extends ChangeNotifier {
 
   bool get demoMode => _source == DataSource.demo;
 
-  double _demoKw = 1.24;
-  double _voltage = 220.4;
-  double _frequency = 50.02;
-  double _powerFactor = 0.94;
-  double _energyKwh = 8.6;
-  double _demoSolarKw = 1.86;
-  double _peakKw = 2.1;
+  /// Pembacaan terakhir, apa pun sumbernya.
+  EnergyReading? get reading => _reading;
 
-  final List<double> _usageHistory = <double>[
-    0.42,
-    0.38,
-    0.35,
-    0.33,
-    0.34,
-    0.40,
-    0.55,
-    0.72,
-    0.68,
-    0.61,
-    0.58,
-    0.64,
-    0.95,
-    1.10,
-    1.05,
-    0.98,
-    0.90,
-    0.84,
-    0.88,
-    1.02,
-    1.24,
-    1.10,
-    0.82,
-    0.56,
-  ];
+  double get voltage => _reading?.voltage ?? 0;
+  double get current => _reading?.current ?? 0;
 
-  final List<EnergyDevice> _devices = EnergyDevice.seedData
-      .map((device) => device.copyWith())
-      .toList();
-  List<EnergyDevice> get devices => List.unmodifiable(_devices);
+  /// Daya dalam kilowatt. Nama ini dipakai langsung oleh pengujian, jadi
+  /// Despite pembacaan di API memakai watt, konversi ke kilowatt tetap di sini.
+  double get currentKw => (_reading?.power ?? 0) / 1000;
 
-  List<double> get usageHistory => List.unmodifiable(_usageHistory);
+  /// Register kumulatif meter, bukan konsumsi satu periode.
+  ///
+  /// Nilai ini bertambah seumur hidup perangkat, jadi tidak boleh dipakai
+  /// sebagai "kWh hari ini". Konsumsi per periode datang dari
+  /// [EnergyHourly.energyKwh] lewat riwayat.
+  double get energyCounter => _reading?.energy ?? 0;
 
-  double get currentKw => _source == DataSource.api && _reading != null
-      ? _reading!.power / 1000
-      : _demoKw;
-  double get voltage => _source == DataSource.api && _reading != null
-      ? _reading!.voltage
-      : _voltage;
-  double get current => _source == DataSource.api && _reading != null
-      ? _reading!.current
-      : currentKw * 1000 / voltage;
-  double get energyToday => _source == DataSource.api && _reading != null
-      ? _reading!.energy
-      : _energyKwh;
-  double get frequency => _source == DataSource.api && _reading != null
-      ? _reading!.frequency
-      : _frequency;
-  double get powerFactor => _source == DataSource.api && _reading != null
-      ? _reading!.powerFactor
-      : _powerFactor;
-  double get solarKw => _source == DataSource.api ? 0 : _demoSolarKw;
-  double get peakToday => math.max(_peakKw, currentKw);
+  double get frequency => _reading?.frequency ?? 0;
+  double get powerFactor => _reading?.powerFactor ?? 0;
 
-  bool get isStable =>
-      powerFactor >= 0.9 &&
-      voltage >= 210 &&
-      voltage <= 230 &&
-      frequency >= 49.5 &&
-      frequency <= 50.5;
+  /// Enam metrik beserta penilaiannya terhadap rentang yang diharapkan.
+  ///
+  /// Mengembalikan daftar kosong saat belum ada pembacaan, supaya widget bisa
+  /// membedakan "belum ada data" dari "data-nya di luar rentang".
+  List<MetricReading> get liveMetrics {
+    final current = _reading;
+    if (current == null) return const [];
+    return RecommendationEngine.classifyLive(current);
+  }
+
+  /// Metrik yang sedang keluar dari rentang sehat.
+  List<MetricReading> get unhealthyMetrics =>
+      liveMetrics.where((m) => !m.isHealthy).toList();
+
+  /// True kalau semua metrik berbatas berada di dalam rentangnya.
+  bool get isStable {
+    final readings = liveMetrics;
+    if (readings.isEmpty) return false;
+    return !readings.any((m) => m.metric.isBounded && !m.isHealthy);
+  }
+
+  // Generator simulasi, hanya hidup di mode demo.
+  final _DemoSignal _demo = _DemoSignal(math.Random(7));
+
+  /// Daya dari sampel polling terakhir, untuk grafik singkat di dashboard.
+  ///
+  /// Berbeda dari riwayat per jam, ini benar-benar data mentah lima menit
+  /// terakhir, jadi label grafiknya harus menyebut rentang itu dan bukan
+  /// "hari".
+  final List<double> _recentPowerKw = <double>[];
+
+  static const int _recentPowerWindow = 60;
+
+  List<double> get recentPowerKw => List.unmodifiable(_recentPowerKw);
+
+  void _trackPower() {
+    _recentPowerKw.add(currentKw);
+    if (_recentPowerKw.length > _recentPowerWindow) {
+      _recentPowerKw.removeAt(0);
+    }
+  }
 
   void startDemo() {
     if (_source != DataSource.demo) return;
-    _demoTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+    _demoTimer ??= Timer.periodic(pollInterval, (_) {
       _tickDemo();
       notifyListeners();
     });
+    if (_reading == null) {
+      _reading = _demo.sample(DateTime.now());
+      _lastUpdated = DateTime.now();
+    }
   }
 
   void _tickDemo() {
-    _demoKw = (_demoKw + (_rng.nextDouble() - 0.5) * 0.16)
-        .clamp(0.5, 2.8)
-        .toDouble();
-    _voltage = (220.4 + (_rng.nextDouble() - 0.5) * 4.8)
-        .clamp(212, 229)
-        .toDouble();
-    _frequency = 50 + (_rng.nextDouble() - 0.5) * 0.1;
-    _powerFactor = 0.93 + _rng.nextDouble() * 0.04;
-    _energyKwh += _demoKw * (1 / 3600);
-    _demoSolarKw =
-        (1.2 + math.sin(DateTime.now().millisecondsSinceEpoch / 60000) * 0.7)
-            .clamp(0.2, 2.4)
-            .toDouble();
-
-    _pushHistory();
-    _syncDevicePowers();
-  }
-
-  void _pushHistory() {
-    _usageHistory.add(currentKw);
-    if (_usageHistory.length > 24) {
-      _usageHistory.removeAt(0);
-    }
-    if (currentKw > _peakKw) _peakKw = currentKw;
-  }
-
-  void _syncDevicePowers() {
-    const baseByDevice = {
-      'dev_01': 0.042,
-      'dev_02': 0.30,
-      'dev_03': 0.18,
-      'dev_05': 0.42,
-    };
-
-    final totalBase = _devices
-        .where((device) => device.isOn)
-        .fold(0.0, (sum, device) => sum + (baseByDevice[device.id] ?? 0));
-
-    final factor = totalBase > 0
-        ? (currentKw / totalBase).clamp(0.3, 2.2)
-        : 1.0;
-
-    for (var i = 0; i < _devices.length; i++) {
-      final device = _devices[i];
-      if (device.id == 'dev_06') {
-        _devices[i] = device.copyWith(isOn: true, powerDrawKw: -solarKw);
-        continue;
-      }
-      if (!device.isOn) {
-        _devices[i] = device.copyWith(powerDrawKw: 0);
-        continue;
-      }
-      final base = baseByDevice[device.id] ?? 0.02;
-      final noise = 1 + (_rng.nextDouble() - 0.5) * 0.1;
-      _devices[i] = device.copyWith(
-        powerDrawKw: (base * factor * noise).clamp(0.0, 3.0),
-      );
-    }
+    final now = DateTime.now();
+    final reading = _demo.sample(now);
+    _reading = reading;
+    _lastUpdated = now;
+    _trackPower();
+    recorder?.record(reading, now: now);
   }
 
   Future<void> connect({Uri? endpoint}) async {
@@ -277,21 +226,12 @@ class EnergyDataProvider extends ChangeNotifier {
   void _applyReading(EnergyReading reading) {
     _reading = reading;
     _lastUpdated = DateTime.now();
-    _pushHistory();
-    _syncDevicePowers();
+    _trackPower();
     recorder?.record(reading, now: _lastUpdated);
   }
 
   Future<void> persistPendingHistory() async {
     await recorder?.flush();
-  }
-
-  void setDeviceOn(String id, bool value) {
-    final index = _devices.indexWhere((device) => device.id == id);
-    if (index == -1) return;
-    _devices[index] = _devices[index].copyWith(isOn: value);
-    _syncDevicePowers();
-    notifyListeners();
   }
 
   Future<void> disconnect() async {
@@ -306,6 +246,7 @@ class EnergyDataProvider extends ChangeNotifier {
     _connectedSince = null;
     _lastUpdated = null;
     _reading = null;
+    _recentPowerKw.clear();
     _endpoint = null;
     _error = null;
     _source = DataSource.demo;
@@ -320,5 +261,84 @@ class EnergyDataProvider extends ChangeNotifier {
     _pollTimer?.cancel();
     _apiClient.close();
     super.dispose();
+  }
+}
+
+/// Pembangkit pembacaan tiruan untuk mode demo.
+///
+/// Modelnya memuat satu hari penuh supaya history per jam punya bentuk yang
+/// masuk akal: pagi naik, siang tinggi, malam turun. Noise acak murni akan
+/// menghasilkan garis yang datar sehingga rekomendasi tidak bermakna.
+///
+/// Nilainya tetap melewati [EnergyReading] dan [EnergyRecorder] yang sama dengan
+/// data ESP, jadi riwayat, analisis, dan rekomendasi bisa didemokan tanpa
+/// perangkat keras. Yang membedakan hanya sumbernya, bukan alurnya.
+class _DemoSignal {
+  _DemoSignal(this._rng);
+
+  final math.Random _rng;
+
+  /// Register kumulatif, ditahan antar sampel supaya `energy` berperilaku
+  /// seperti meter sungguhan.
+  double _counter = 8.6;
+
+  /// Waktu sampel terakhir, untuk menghitung berapa kWh yang bertambah di
+  /// antara dua pembacaan.
+  ///
+  /// Tanpa ini register-nya tidak pernah maju, dan `computeIntervalEnergy` akan
+  /// menganggap setiap interval tidak punya meter yang bergerak sehingga seluruh
+  /// riwayat demo ditandai "estimasi".
+  DateTime? _lastSampleAt;
+
+  /// Bentuk beban dasar per jam, dalam kilowatt.
+  ///
+  /// Indeks 0 sampai 23. Puncaknya di jam 19.00 dan titik terendah selepas
+  /// tengah malam, seperti rumah tangga pada umumnya.
+  static const _dailyShapeKw = <double>[
+    0.32, 0.28, 0.26, 0.25, 0.26, 0.32, // 00-05
+    0.48, 0.72, 0.86, 0.78, 0.70, 0.74, // 06-11
+    0.82, 0.80, 0.76, 0.78, 0.88, 1.05, // 12-17
+    1.24, 1.42, 1.38, 1.10, 0.72, 0.45, // 18-23
+  ];
+
+  EnergyReading sample(DateTime now) {
+    final hour = now.hour;
+    final base = _dailyShapeKw[hour];
+    final wobble = 1 + (_rng.nextDouble() - 0.5) * 0.16;
+    final power = (base * wobble).clamp(0.12, 3.2).toDouble();
+
+    final voltage = (220.4 + (_rng.nextDouble() - 0.5) * 4.4)
+        .clamp(208, 232)
+        .toDouble();
+    final powerFactor = 0.9 + _rng.nextDouble() * 0.09;
+    final frequency = 50 + (_rng.nextDouble() - 0.5) * 0.16;
+
+    // Arus dihitung dari S = P / PF. Meter sungguhan sudah memperhitungkan
+    // faktor daya saat melaporkan arus, jadi angka di sini harus konsisten
+    // dengan daya, tegangan, dan faktor daya yang lain.
+    final current = (power * 1000 / (voltage * powerFactor)).clamp(0.0, 32.0);
+
+    // Register maju sebesar daya dikali waktu sejak sampel terakhir. Dijepit
+    // supaya lompatan waktu yang panjang, misalnya setelah aplikasi lama
+    // tertidur, tidak langsung menambah ratusan kWh.
+    final previousAt = _lastSampleAt;
+    if (previousAt != null) {
+      final raw = now.difference(previousAt);
+      final elapsed = raw.isNegative ? Duration.zero : raw;
+      final bounded = elapsed > const Duration(seconds: 30)
+          ? const Duration(seconds: 30)
+          : elapsed;
+      _counter += power * (bounded.inMilliseconds / 3600000);
+    }
+    _lastSampleAt = now;
+
+    return EnergyReading(
+      voltage: voltage,
+      current: current.toDouble(),
+      power: power * 1000,
+      energy: _counter,
+      frequency: frequency,
+      powerFactor: powerFactor,
+    );
   }
 }

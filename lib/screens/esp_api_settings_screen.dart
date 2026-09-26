@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/local/app_database.dart';
+import '../models/energy_metric.dart';
 import '../providers/energy_data_provider.dart';
 import '../providers/sync_status_provider.dart';
 import '../services/energy_api_client.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../widgets/metric_tile.dart';
 import '../widgets/status_pill.dart';
 
 class EspApiSettingsScreen extends StatefulWidget {
@@ -276,46 +278,12 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
     );
   }
 
+  /// Grid enam metrik terakhir yang diterima dari ESP.
+  ///
+  /// Memakai [MetricGrid] supaya jumlah kolom ikut lebar layar. Versi sebelumnya
+  /// memakai `GridView.count` dengan tiga kolom dan `childAspectRatio` tetap,
+  /// yang membuat kartu terpotong di layar sempit.
   Widget _buildLatestReading(EnergyDataProvider provider) {
-    final readings = [
-      (
-        label: 'Tegangan',
-        value: _format(provider.voltage, 1),
-        unit: 'V',
-        icon: Icons.bolt_rounded,
-      ),
-      (
-        label: 'Arus',
-        value: _format(provider.current, 2),
-        unit: 'A',
-        icon: Icons.waves_rounded,
-      ),
-      (
-        label: 'Daya',
-        value: _format(provider.currentKw, 2),
-        unit: 'kW',
-        icon: Icons.electric_meter_rounded,
-      ),
-      (
-        label: 'Energi',
-        value: _format(provider.energyToday, 1),
-        unit: 'kWh',
-        icon: Icons.energy_savings_leaf_rounded,
-      ),
-      (
-        label: 'Frekuensi',
-        value: _format(provider.frequency, 2),
-        unit: 'Hz',
-        icon: Icons.speed_rounded,
-      ),
-      (
-        label: 'Faktor daya',
-        value: _format(provider.powerFactor, 2),
-        unit: 'PF',
-        icon: Icons.tune_rounded,
-      ),
-    ];
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -330,71 +298,17 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
             ),
           ),
         ),
-        GridView.count(
-          crossAxisCount: 3,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          childAspectRatio: 1.25,
-          children: [
-            for (final reading in readings)
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.border),
-                  boxShadow: AppTheme.softShadow,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          reading.icon,
-                          size: 15,
-                          color: AppColors.primaryDark,
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: Text(
-                            reading.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: AppColors.textMuted,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text.rich(
-                      TextSpan(
-                        text: reading.value,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
-                        ),
-                        children: [
-                          TextSpan(
-                            text: ' ${reading.unit}',
-                            style: const TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w500,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+        MetricGrid(
+          tiles: [
+            for (final reading in provider.liveMetrics)
+              MetricTile(
+                metric: reading.metric,
+                value: reading.value,
+                status: reading.status,
+                // Energi adalah register kumulatif PZEM, bukan konsumsi harian.
+                footnote: reading.metric == EnergyMetric.energy
+                    ? 'kumulatif'
+                    : null,
               ),
           ],
         ),
@@ -589,7 +503,4 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
       ],
     );
   }
-
-  String _format(double value, int decimals) =>
-      value.toStringAsFixed(decimals).replaceAll('.', ',');
 }
