@@ -17,11 +17,17 @@ class EnergyDatabase extends _$EnergyDatabase {
   EnergyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) => m.createAll(),
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await m.addColumn(hourlyQueue, hourlyQueue.nextAttemptAt);
+            await m.createIndex(hourlyQueueDueIdx);
+          }
+        },
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
         },
@@ -38,6 +44,15 @@ class EnergyDatabase extends _$EnergyDatabase {
       ),
     );
     return select(localDevices).getSingle();
+  }
+
+  /// Id perangkat yang sudah terdaftar, null kalau belum pernah dibuat.
+  ///
+  /// Berbeda dengan [ensureLocalDevice] yang sekaligus membuat baris baru, ini
+  /// murni pembacaan sehingga aman dipanggil dari UI.
+  Future<String?> currentDeviceId() async {
+    final existing = await select(localDevices).get();
+    return existing.isEmpty ? null : existing.first.localId;
   }
 
   Future<void> updateLocalDevice({
@@ -152,6 +167,7 @@ class EnergyDatabase extends _$EnergyDatabase {
         coveragePct: Value(hourly.coveragePct),
         dataQuality: Value(hourly.quality.wireName),
         syncState: const Value('pending'),
+        nextAttemptAt: const Value(null),
         updatedAt: Value(toStorage(now)),
       ),
     );
@@ -186,15 +202,23 @@ class EnergyDatabase extends _$EnergyDatabase {
     return rows.map((row) => row.toDomain()).toList();
   }
 
+  /// Baris yang menunggu diunggah ke Supabase, sudah jatuh tempo.
+  ///
+  /// Baris `failed` ikut diambil selama [now] sudah melewati `next_attempt_at`,
+  /// sehingga backoff setelah kegagalan benar-benar dihormati.
   Future<List<HourlyQueueRow>> pendingHours(
     String deviceKey, {
     int limit = 50,
+    DateTime? now,
   }) async {
+    final cutoff = toStorage(now ?? DateTime.now());
     return (select(hourlyQueue)
           ..where(
             (t) =>
                 t.deviceKey.equals(deviceKey) &
-                t.syncState.isIn(const ['pending', 'failed']),
+                t.syncState.isIn(const ['pending', 'failed']) &
+                (t.nextAttemptAt.isNull() |
+                    t.nextAttemptAt.isSmallerOrEqualValue(cutoff)),
           )
           ..orderBy([(t) => OrderingTerm(expression: t.hourStart)])
           ..limit(limit))
@@ -215,6 +239,32 @@ class EnergyDatabase extends _$EnergyDatabase {
     return row.read<int>('c');
   }
 
+  /// Baris `failed` yang masih dalam masa backoff, jadi belum giliran diunggah.
+  Future<int> countDeferred(String deviceKey, {DateTime? now}) async {    final cutoff = toStorage(now ?? DateTime.now());
+    final row = await customSelect(
+      'SELECT COUNT(*) AS c FROM hourly_queue '
+      "WHERE device_key = ? AND sync_state = 'failed' "
+      'AND next_attempt_at IS NOT NULL AND next_attempt_at > ?',
+      variables: [Variable<String>(deviceKey), Variable<DateTime>(cutoff)],
+      readsFrom: {hourlyQueue},
+    ).getSingle();
+    return row.read<int>('c');
+  }
+
+  /// Satu baris hourly berdasarkan kunci utamanya, tanpa memfilter backoff.
+  ///
+  /// Berguna untuk memeriksa status sinkronisasi sebuah jam secara spesifik,
+  /// termasuk jam yang masih dalam masa tunda.
+  Future<HourlyQueueRow?> findHour(String deviceKey, DateTime hourStart) {
+    return (select(hourlyQueue)
+          ..where(
+            (t) =>
+                t.deviceKey.equals(deviceKey) &
+                t.hourStart.equals(toStorage(hourStart)),
+          ))
+        .getSingleOrNull();
+  }
+
   Future<void> markSynced(
     String deviceKey,
     DateTime hourStart, {
@@ -230,36 +280,38 @@ class EnergyDatabase extends _$EnergyDatabase {
         syncState: const Value('synced'),
         syncedAt: Value(toStorage(now)),
         lastError: const Value(null),
+        nextAttemptAt: const Value(null),
         updatedAt: Value(toStorage(now)),
       ),
     );
   }
 
+  /// Menandai satu jam gagal diunggah dan menjadwalkannya coba lagi.
+  ///
+  /// `attempts` dinaikkan di level SQL (`attempts = attempts + 1`) supaya tetap
+  /// benar walau dua proses menandai baris yang sama bersamaan. Versi
+  /// sebelumnya melakukan read-modify-write dalam dua round-trip sehingga
+  /// `attempts` bisa hilang.
   Future<void> markFailed(
     String deviceKey,
     DateTime hourStart, {
     required String error,
     required DateTime now,
+    Duration backoff = Duration.zero,
   }) async {
-    final current = await (select(hourlyQueue)..where(
-          (t) =>
-              t.deviceKey.equals(deviceKey) &
-              t.hourStart.equals(toStorage(hourStart)),
-        ))
-        .getSingleOrNull();
-
-    await (update(hourlyQueue)..where(
-          (t) =>
-              t.deviceKey.equals(deviceKey) &
-              t.hourStart.equals(toStorage(hourStart)),
-        ))
-        .write(
-      HourlyQueueCompanion(
-        syncState: const Value('failed'),
-        attempts: Value((current?.attempts ?? 0) + 1),
-        lastError: Value(error),
-        updatedAt: Value(toStorage(now)),
-      ),
+    await customUpdate(
+      'UPDATE hourly_queue SET sync_state = ?, attempts = attempts + 1, '
+      'last_error = ?, next_attempt_at = ?, updated_at = ? '
+      'WHERE device_key = ? AND hour_start = ?',
+      variables: [
+        const Variable<String>('failed'),
+        Variable<String>(error),
+        Variable<DateTime>(toStorage(now.add(backoff))),
+        Variable<DateTime>(toStorage(now)),
+        Variable<String>(deviceKey),
+        Variable<DateTime>(toStorage(hourStart)),
+      ],
+      updates: {hourlyQueue},
     );
   }
 
@@ -313,4 +365,7 @@ extension HourlyQueueRowMapper on HourlyQueueRow {
       );
 
   EnergySyncState get syncStateValue => EnergySyncState.fromWire(syncState);
+
+  /// Bentuk payload yang dikirim ke tabel `energy_hourly` di Postgres.
+  Map<String, dynamic> toUploadJson() => toDomain().toJson();
 }

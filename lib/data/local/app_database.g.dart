@@ -1858,6 +1858,18 @@ class $HourlyQueueTable extends HourlyQueue
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _nextAttemptAtMeta = const VerificationMeta(
+    'nextAttemptAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> nextAttemptAt =
+      GeneratedColumn<DateTime>(
+        'next_attempt_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
   );
@@ -1896,6 +1908,7 @@ class $HourlyQueueTable extends HourlyQueue
     attempts,
     lastError,
     syncedAt,
+    nextAttemptAt,
     updatedAt,
   ];
   @override
@@ -2094,6 +2107,15 @@ class $HourlyQueueTable extends HourlyQueue
         syncedAt.isAcceptableOrUnknown(data['synced_at']!, _syncedAtMeta),
       );
     }
+    if (data.containsKey('next_attempt_at')) {
+      context.handle(
+        _nextAttemptAtMeta,
+        nextAttemptAt.isAcceptableOrUnknown(
+          data['next_attempt_at']!,
+          _nextAttemptAtMeta,
+        ),
+      );
+    }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
@@ -2211,6 +2233,10 @@ class $HourlyQueueTable extends HourlyQueue
         DriftSqlType.dateTime,
         data['${effectivePrefix}synced_at'],
       ),
+      nextAttemptAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}next_attempt_at'],
+      ),
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
@@ -2250,6 +2276,10 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
   final int attempts;
   final String? lastError;
   final DateTime? syncedAt;
+
+  /// Kapan baris ini boleh dicoba upload lagi. Null berarti sekarang juga.
+  /// Dipakai untuk menerapkan backoff setelah kegagalan.
+  final DateTime? nextAttemptAt;
   final DateTime updatedAt;
   const HourlyQueueRow({
     required this.deviceKey,
@@ -2277,6 +2307,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     required this.attempts,
     this.lastError,
     this.syncedAt,
+    this.nextAttemptAt,
     required this.updatedAt,
   });
   @override
@@ -2326,6 +2357,9 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     }
     if (!nullToAbsent || syncedAt != null) {
       map['synced_at'] = Variable<DateTime>(syncedAt);
+    }
+    if (!nullToAbsent || nextAttemptAt != null) {
+      map['next_attempt_at'] = Variable<DateTime>(nextAttemptAt);
     }
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -2378,6 +2412,9 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
       syncedAt: syncedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(syncedAt),
+      nextAttemptAt: nextAttemptAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(nextAttemptAt),
       updatedAt: Value(updatedAt),
     );
   }
@@ -2413,6 +2450,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
       attempts: serializer.fromJson<int>(json['attempts']),
       lastError: serializer.fromJson<String?>(json['lastError']),
       syncedAt: serializer.fromJson<DateTime?>(json['syncedAt']),
+      nextAttemptAt: serializer.fromJson<DateTime?>(json['nextAttemptAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
   }
@@ -2445,6 +2483,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
       'attempts': serializer.toJson<int>(attempts),
       'lastError': serializer.toJson<String?>(lastError),
       'syncedAt': serializer.toJson<DateTime?>(syncedAt),
+      'nextAttemptAt': serializer.toJson<DateTime?>(nextAttemptAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
   }
@@ -2475,6 +2514,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     int? attempts,
     Value<String?> lastError = const Value.absent(),
     Value<DateTime?> syncedAt = const Value.absent(),
+    Value<DateTime?> nextAttemptAt = const Value.absent(),
     DateTime? updatedAt,
   }) => HourlyQueueRow(
     deviceKey: deviceKey ?? this.deviceKey,
@@ -2504,6 +2544,9 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     attempts: attempts ?? this.attempts,
     lastError: lastError.present ? lastError.value : this.lastError,
     syncedAt: syncedAt.present ? syncedAt.value : this.syncedAt,
+    nextAttemptAt: nextAttemptAt.present
+        ? nextAttemptAt.value
+        : this.nextAttemptAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
   HourlyQueueRow copyWithCompanion(HourlyQueueCompanion data) {
@@ -2563,6 +2606,9 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
       attempts: data.attempts.present ? data.attempts.value : this.attempts,
       lastError: data.lastError.present ? data.lastError.value : this.lastError,
       syncedAt: data.syncedAt.present ? data.syncedAt.value : this.syncedAt,
+      nextAttemptAt: data.nextAttemptAt.present
+          ? data.nextAttemptAt.value
+          : this.nextAttemptAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
@@ -2595,6 +2641,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
           ..write('attempts: $attempts, ')
           ..write('lastError: $lastError, ')
           ..write('syncedAt: $syncedAt, ')
+          ..write('nextAttemptAt: $nextAttemptAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
@@ -2627,6 +2674,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     attempts,
     lastError,
     syncedAt,
+    nextAttemptAt,
     updatedAt,
   ]);
   @override
@@ -2658,6 +2706,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
           other.attempts == this.attempts &&
           other.lastError == this.lastError &&
           other.syncedAt == this.syncedAt &&
+          other.nextAttemptAt == this.nextAttemptAt &&
           other.updatedAt == this.updatedAt);
 }
 
@@ -2687,6 +2736,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
   final Value<int> attempts;
   final Value<String?> lastError;
   final Value<DateTime?> syncedAt;
+  final Value<DateTime?> nextAttemptAt;
   final Value<DateTime> updatedAt;
   final Value<int> rowid;
   const HourlyQueueCompanion({
@@ -2715,6 +2765,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     this.attempts = const Value.absent(),
     this.lastError = const Value.absent(),
     this.syncedAt = const Value.absent(),
+    this.nextAttemptAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -2744,6 +2795,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     this.attempts = const Value.absent(),
     this.lastError = const Value.absent(),
     this.syncedAt = const Value.absent(),
+    this.nextAttemptAt = const Value.absent(),
     required DateTime updatedAt,
     this.rowid = const Value.absent(),
   }) : deviceKey = Value(deviceKey),
@@ -2775,6 +2827,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     Expression<int>? attempts,
     Expression<String>? lastError,
     Expression<DateTime>? syncedAt,
+    Expression<DateTime>? nextAttemptAt,
     Expression<DateTime>? updatedAt,
     Expression<int>? rowid,
   }) {
@@ -2804,6 +2857,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
       if (attempts != null) 'attempts': attempts,
       if (lastError != null) 'last_error': lastError,
       if (syncedAt != null) 'synced_at': syncedAt,
+      if (nextAttemptAt != null) 'next_attempt_at': nextAttemptAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -2835,6 +2889,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     Value<int>? attempts,
     Value<String?>? lastError,
     Value<DateTime?>? syncedAt,
+    Value<DateTime?>? nextAttemptAt,
     Value<DateTime>? updatedAt,
     Value<int>? rowid,
   }) {
@@ -2864,6 +2919,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
       attempts: attempts ?? this.attempts,
       lastError: lastError ?? this.lastError,
       syncedAt: syncedAt ?? this.syncedAt,
+      nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
     );
@@ -2947,6 +3003,9 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     if (syncedAt.present) {
       map['synced_at'] = Variable<DateTime>(syncedAt.value);
     }
+    if (nextAttemptAt.present) {
+      map['next_attempt_at'] = Variable<DateTime>(nextAttemptAt.value);
+    }
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
@@ -2984,6 +3043,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
           ..write('attempts: $attempts, ')
           ..write('lastError: $lastError, ')
           ..write('syncedAt: $syncedAt, ')
+          ..write('nextAttemptAt: $nextAttemptAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -2999,6 +3059,10 @@ abstract class _$EnergyDatabase extends GeneratedDatabase {
     this,
   );
   late final $HourlyQueueTable hourlyQueue = $HourlyQueueTable(this);
+  late final Index hourlyQueueDueIdx = Index(
+    'hourly_queue_due_idx',
+    'CREATE INDEX hourly_queue_due_idx ON hourly_queue (device_key, sync_state, next_attempt_at)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -3007,6 +3071,7 @@ abstract class _$EnergyDatabase extends GeneratedDatabase {
     localDevices,
     minuteAggregates,
     hourlyQueue,
+    hourlyQueueDueIdx,
   ];
 }
 
@@ -3807,6 +3872,7 @@ typedef $$HourlyQueueTableCreateCompanionBuilder =
       Value<int> attempts,
       Value<String?> lastError,
       Value<DateTime?> syncedAt,
+      Value<DateTime?> nextAttemptAt,
       required DateTime updatedAt,
       Value<int> rowid,
     });
@@ -3837,6 +3903,7 @@ typedef $$HourlyQueueTableUpdateCompanionBuilder =
       Value<int> attempts,
       Value<String?> lastError,
       Value<DateTime?> syncedAt,
+      Value<DateTime?> nextAttemptAt,
       Value<DateTime> updatedAt,
       Value<int> rowid,
     });
@@ -3972,6 +4039,11 @@ class $$HourlyQueueTableFilterComposer
 
   ColumnFilters<DateTime> get syncedAt => $composableBuilder(
     column: $table.syncedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get nextAttemptAt => $composableBuilder(
+    column: $table.nextAttemptAt,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -4115,6 +4187,11 @@ class $$HourlyQueueTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get nextAttemptAt => $composableBuilder(
+    column: $table.nextAttemptAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
@@ -4235,6 +4312,11 @@ class $$HourlyQueueTableAnnotationComposer
   GeneratedColumn<DateTime> get syncedAt =>
       $composableBuilder(column: $table.syncedAt, builder: (column) => column);
 
+  GeneratedColumn<DateTime> get nextAttemptAt => $composableBuilder(
+    column: $table.nextAttemptAt,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 }
@@ -4295,6 +4377,7 @@ class $$HourlyQueueTableTableManager
                 Value<int> attempts = const Value.absent(),
                 Value<String?> lastError = const Value.absent(),
                 Value<DateTime?> syncedAt = const Value.absent(),
+                Value<DateTime?> nextAttemptAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => HourlyQueueCompanion(
@@ -4323,6 +4406,7 @@ class $$HourlyQueueTableTableManager
                 attempts: attempts,
                 lastError: lastError,
                 syncedAt: syncedAt,
+                nextAttemptAt: nextAttemptAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
               ),
@@ -4353,6 +4437,7 @@ class $$HourlyQueueTableTableManager
                 Value<int> attempts = const Value.absent(),
                 Value<String?> lastError = const Value.absent(),
                 Value<DateTime?> syncedAt = const Value.absent(),
+                Value<DateTime?> nextAttemptAt = const Value.absent(),
                 required DateTime updatedAt,
                 Value<int> rowid = const Value.absent(),
               }) => HourlyQueueCompanion.insert(
@@ -4381,6 +4466,7 @@ class $$HourlyQueueTableTableManager
                 attempts: attempts,
                 lastError: lastError,
                 syncedAt: syncedAt,
+                nextAttemptAt: nextAttemptAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
               ),

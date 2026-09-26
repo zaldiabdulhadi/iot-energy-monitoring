@@ -25,6 +25,10 @@ class EnergyDataProvider extends ChangeNotifier {
   Timer? _demoTimer;
   Timer? _pollTimer;
   bool _pollInFlight = false;
+
+  /// Dipakai untuk menahan notifyListeners setelah dispose(), karena permintaan
+  /// yang sudah berjalan tidak ikut terhenti oleh pembatalan timer.
+  bool _disposed = false;
   DataSource _source = DataSource.demo;
   DataSource get source => _source;
 
@@ -237,29 +241,36 @@ class EnergyDataProvider extends ChangeNotifier {
   }
 
   Future<void> _poll() async {
-    if (_pollInFlight || _source != DataSource.api || _endpoint == null) return;
+    if (_pollInFlight || _source != DataSource.api || _endpoint == null) {
+      return;
+    }
     _pollInFlight = true;
 
     try {
       final reading = await _apiClient.fetch(_endpoint!);
+      if (_disposed) return;
       _applyReading(reading);
       _connected = true;
       _connectedEndpoint = _endpoint;
       _error = null;
       _connectedSince ??= DateTime.now();
     } on EnergyApiException catch (error) {
+      if (_disposed) return;
       _connected = false;
       _connectedEndpoint = null;
       _connectedSince = null;
       _error = error.message;
     } catch (_) {
+      if (_disposed) return;
       _connected = false;
       _connectedEndpoint = null;
       _connectedSince = null;
       _error = 'Terjadi kesalahan saat memperbarui data API ESP.';
     } finally {
       _pollInFlight = false;
-      notifyListeners();
+      // Pembatalan timer tidak menghentikan permintaan yang sedang berjalan,
+      // jadi blok ini tetap bisa selesai setelah dispose() dipanggil.
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -304,6 +315,7 @@ class EnergyDataProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _demoTimer?.cancel();
     _pollTimer?.cancel();
     _apiClient.close();

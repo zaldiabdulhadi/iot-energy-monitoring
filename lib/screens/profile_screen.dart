@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/energy_data_provider.dart';
+import '../providers/sync_status_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../widgets/status_pill.dart';
@@ -103,16 +104,7 @@ class ProfileScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              _SettingTile(
-                icon: Icons.cloud_sync_outlined,
-                label: 'Sinkronisasi data',
-                subtitle: 'Ambil data API setiap 5 detik',
-                trailing: const StatusPill(
-                  label: 'Aktif',
-                  tone: PillTone.success,
-                  icon: Icons.sync_rounded,
-                ),
-              ),
+              _SyncTile(),
               _SettingTile(
                 icon: Icons.help_outline_rounded,
                 label: 'Pusat bantuan',
@@ -439,5 +431,75 @@ class _SettingTile extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Baris "Sinkronisasi data" yang menampilkan kondisi antrean unggahan yang
+/// sebenarnya: berapa jam yang belum terkirim, kapan sinkronisasi terakhir
+/// berhasil, dan pesan error bila ada.
+class _SyncTile extends StatelessWidget {
+  const _SyncTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<SyncStatusProvider>(
+      builder: (context, sync, _) {
+        final lastSynced = sync.lastSyncedAt;
+        final localizations = MaterialLocalizations.of(context);
+
+        final String subtitle;
+        if (!sync.isEnabled) {
+          // Ketiganya wajib, karena policy RLS menolak request tanpa
+          // x-sync-secret. Menyebutkan hanya SUPABASE_URL akan membuat pengguna
+          // mengisi dua define lalu tetap gagal sinkronisasi.
+          subtitle = 'Isi SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, dan '
+              'SUPABASE_SYNC_SECRET saat build untuk mengaktifkan';
+        } else if (sync.error != null) {
+          subtitle = sync.error!;
+        } else if (lastSynced != null) {
+          subtitle = 'Terakhir sinkron '
+              '${localizations.formatMediumDate(lastSynced)} '
+              '${localizations.formatTimeOfDay(
+            TimeOfDay.fromDateTime(lastSynced),
+            alwaysUse24HourFormat: true,
+          )}';
+        } else {
+          subtitle = 'Belum ada data yang tersinkron';
+        }
+
+        return _SettingTile(
+          icon: Icons.cloud_sync_outlined,
+          label: 'Sinkronisasi data',
+          subtitle: subtitle,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              StatusPill(
+                label: sync.statusLabel,
+                tone: _toneOf(sync),
+                icon: sync.isSyncing ? Icons.sync_rounded : null,
+              ),
+              if (sync.isEnabled) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  onPressed: sync.isSyncing ? null : sync.syncNow,
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                  tooltip: 'Sinkronkan sekarang',
+                  color: AppColors.textMuted,
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static PillTone _toneOf(SyncStatusProvider sync) {
+    if (!sync.isEnabled) return PillTone.neutral;
+    if (sync.isSyncing) return PillTone.info;
+    if (sync.error != null) return PillTone.critical;
+    if (sync.hasPending) return PillTone.warning;
+    return PillTone.success;
   }
 }

@@ -40,6 +40,10 @@ class MinuteAggregates extends Table {
   Set<Column> get primaryKey => {deviceKey, minuteStart};
 }
 
+@TableIndex(
+  name: 'hourly_queue_due_idx',
+  columns: {#deviceKey, #syncState, #nextAttemptAt},
+)
 @DataClassName('HourlyQueueRow')
 class HourlyQueue extends Table {
   TextColumn get deviceKey => text()();
@@ -67,6 +71,10 @@ class HourlyQueue extends Table {
   IntColumn get attempts => integer().withDefault(const Constant(0))();
   TextColumn get lastError => text().nullable()();
   DateTimeColumn get syncedAt => dateTime().nullable()();
+
+  /// Kapan baris ini boleh dicoba upload lagi. Null berarti sekarang juga.
+  /// Dipakai untuk menerapkan backoff setelah kegagalan.
+  DateTimeColumn get nextAttemptAt => dateTime().nullable()();
   DateTimeColumn get updatedAt => dateTime()();
 
   @override

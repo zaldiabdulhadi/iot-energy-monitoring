@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/local/app_database.dart';
 import '../providers/energy_data_provider.dart';
+import '../providers/sync_status_provider.dart';
 import '../services/energy_api_client.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
@@ -34,6 +36,39 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
     _clock = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
+    unawaited(_restoreEndpoint());
+  }
+
+  /// Mengisi kolom endpoint dari `local_devices.endpoint`.
+  ///
+  /// Tanpa ini, URL yang diketik pengguna hilang setiap kali aplikasi ditutup
+  /// karena sebelumnya tidak pernah ditulis ke database.
+  Future<void> _restoreEndpoint() async {
+    final database = context.read<EnergyDatabase>();
+    final deviceId = await database.currentDeviceId();
+    if (deviceId == null) return;
+    final device =
+        await (database.select(database.localDevices)
+              ..where((t) => t.localId.equals(deviceId)))
+            .getSingleOrNull();
+    final saved = device?.endpoint;
+    if (!mounted || saved == null || saved.isEmpty) return;
+    _endpointController.text = saved;
+    _endpointController.selection =
+        TextSelection.collapsed(offset: saved.length);
+  }
+
+  /// Menyimpan endpoint ke `local_devices` agar baris `devices` di Supabase
+  /// ikut memuat konfigurasi yang benar.
+  Future<void> _saveEndpoint(String endpoint) async {
+    final database = context.read<EnergyDatabase>();
+    final deviceId = await database.currentDeviceId() ??
+        (await database.ensureLocalDevice()).localId;
+    await database.updateLocalDevice(localId: deviceId, endpoint: endpoint);
+
+    // Profil perangkat di Supabase jadi basi sampai siklus sync berikutnya.
+    // Dorong sekarang supaya tidak menunggu timer lima menit.
+    if (mounted) context.read<SyncStatusProvider>().syncNow();
   }
 
   @override
@@ -69,12 +104,12 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
       return;
     }
 
+    await _saveEndpoint(endpoint.toString());
     await provider.connect(endpoint: endpoint);
     if (mounted && provider.error != null) {
       _showError(provider.error!);
     }
   }
-
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

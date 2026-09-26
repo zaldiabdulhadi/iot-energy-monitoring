@@ -6,6 +6,24 @@ import 'package:http/testing.dart';
 import 'package:smart_energy/providers/energy_data_provider.dart';
 import 'package:smart_energy/services/energy_api_client.dart';
 
+/// Menunggu sampai [condition] terpenuhi, atau gagal setelah [timeout].
+///
+/// Dipakai untuk hal yang bergantung pada timer async, karena menunggu durasi
+/// tetap membuat test ikut gagal kalau CPU sedang sibuk.
+Future<void> _waitUntil(
+  bool Function() condition,
+  String description, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('$description (${timeout.inMilliseconds}ms tidak cukup)');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
+
 void main() {
   test(
     'provider memakai API dan mempertahankan data saat polling gagal',
@@ -40,9 +58,13 @@ void main() {
       expect(provider.powerFactor, 0.95);
       expect(provider.connectedEndpoint, EnergyApiClient.defaultEndpoint);
 
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+      // Menunggu kondisi nyata, bukan durasi tetap: timer 10ms bisa terlambat
+      // saat suite berjalan di bawah beban CPU berat.
+      await _waitUntil(
+        () => requestCount >= 2 && provider.error != null,
+        'polling tidak pernah mencoba ulang lalu gagal',
+      );
 
-      expect(requestCount, greaterThanOrEqualTo(2));
       expect(provider.connected, isFalse);
       expect(provider.demoMode, isFalse);
       expect(provider.currentKw, 1.105);

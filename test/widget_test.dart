@@ -16,6 +16,12 @@ Future<void> _disposeApp(WidgetTester tester) async {
   await tester.pump();
 }
 
+/// Scrollable list konten halaman yang sedang tampil.
+///
+/// `.last` dipilih karena kerangka aplikasi juga menyisipkan scrollable-nya
+/// sendiri, sementara yang digulir di sini adalah list konten halaman.
+Finder get _contentList => find.byType(Scrollable).last;
+
 void main() {
   testWidgets('Smart Energy app renders dashboard', (tester) async {
     await _pumpApp(tester);
@@ -32,13 +38,20 @@ void main() {
     await tester.tap(find.text('Profil'));
     await tester.pump(const Duration(milliseconds: 300));
 
-    await tester.drag(find.byType(ListView).last, const Offset(0, -900));
+    // Sliver list hanya membangun anak yang berada di viewport, jadi tile yang
+    // dicari harus digulir lebih dulu. scrollUntilVisible dipakai daripada drag
+    // dengan offset tetap karena tinggi tiap tile ikut berubah ketika teks
+    // subtitle memanjang, sehingga posisi pikselnya tidak stabil.
+    final tile = find.text('Koneksi API ESP');
+    await tester.scrollUntilVisible(tile, 200, scrollable: _contentList);
     await tester.pump(const Duration(milliseconds: 400));
 
-    final tile = find.text('Koneksi API ESP');
     expect(tile, findsOneWidget);
 
-    await tester.tapAt(tester.getCenter(tile));
+    await tester.tap(tile);
+    // Bukan pumpAndSettle: layar API ESP punya AnimationController yang
+    // mengulang tanpa henti dan Timer.periodic untuk jam, jadi tidak pernah
+    // sampai tenang.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
@@ -51,10 +64,11 @@ void main() {
     );
     expect(find.text('Mode demo aktif'), findsOneWidget);
 
-    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    final section = find.text('Konfigurasi API');
+    await tester.scrollUntilVisible(section, 200, scrollable: _contentList);
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('Konfigurasi API'), findsOneWidget);
+    expect(section, findsOneWidget);
     expect(find.text('Format data ESP'), findsOneWidget);
 
     await _disposeApp(tester);
