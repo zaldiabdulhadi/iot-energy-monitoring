@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../providers/energy_history_provider.dart';
+import '../services/energy_history_service.dart';
 import '../widgets/layout.dart';
 import 'analytics_screen.dart';
 import 'dashboard_screen.dart';
@@ -23,9 +26,26 @@ class _HomeShellState extends State<HomeShell> {
 
   static const _screens = [
     DashboardScreen(),
-    AnalyticsScreen(),
     ProfileScreen(),
   ];
+
+  /// Tab Analisis memakai provider riwayat sendiri yang boleh menampilkan data
+  /// contoh ketika belum ada rekaman sama sekali.
+  ///
+  /// Provider di atas aplikasi tetap hanya diberi data nyata, sehingga Dashboard
+  /// dan Profil tidak ikut menampilkan angka rekaan hanya karena satu tab
+  /// memintanya.
+  List<Widget> _buildScreens(BuildContext context) => [
+        _screens[0],
+        ChangeNotifierProvider(
+          create: (context) => EnergyHistoryProvider(
+            service: context.read<EnergyHistoryService>(),
+            allowSyntheticWhenEmpty: true,
+          )..load(),
+          child: const AnalyticsScreen(),
+        ),
+        _screens[1],
+      ];
 
   @override
   Widget build(BuildContext context) {
@@ -37,9 +57,8 @@ class _HomeShellState extends State<HomeShell> {
     return Scaffold(
       body: SafeBody(
         bottom: false,
-        child: IndexedStack(index: _index, children: _screens),
-      ),
-      bottomNavigationBar: NavigationBar(
+        child: IndexedStack(index: _index, children: _buildScreens(context)),
+      ),      bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
         labelBehavior:

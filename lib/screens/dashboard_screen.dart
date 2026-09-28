@@ -278,11 +278,11 @@ class _TodayCard extends StatelessWidget {
           MetricGrid(
             tiles: [
               SummaryTile(
-                label: 'Estimasi biaya',
-                value: formatValue(data.cost, 0),
-                suffix: 'Rp',
-                icon: Icons.payments_outlined,
-                caption: '${data.period.label.toLowerCase()} ini',
+                label: 'Rata-rata daya',
+                value: formatValue(data.averagePowerKw, 2),
+                suffix: 'kW',
+                icon: Icons.electric_meter_rounded,
+                caption: 'seluruh periode',
               ),
               SummaryTile(
                 label: 'Daya puncak',

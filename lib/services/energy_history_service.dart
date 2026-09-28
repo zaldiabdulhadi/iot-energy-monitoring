@@ -4,6 +4,7 @@ import '../models/energy_hourly.dart';
 import '../models/energy_metric.dart';
 import '../models/energy_period_summary.dart';
 import '../utils/bucket_time.dart';
+import 'demo_history.dart';
 
 /// Hasil satu permintaan analisis: periode yang dipilih beserta pembandingnya.
 class HistoryReport {
@@ -25,41 +26,62 @@ class HistoryReport {
 /// Ini lapisan yang dibaca layar Analisis. Semuanya diturunkan dari
 /// `hourly_history`, bukan dari nilai yang di-hardcode: kalau riwayat kosong,
 /// hasilnya [EnergyPeriodSummary.empty] dan bukan angka tebasan.
+///
+/// Satu-satunya jalan keluar dari aturan itu ada di parameter `synthetic` pada
+/// [report], dan harus diminta pemanggil secara eksplisit. Layar lain tidak
+/// memintanya, jadi data contoh tidak pernah muncul di layar monitoring.
 class EnergyHistoryService {
-  const EnergyHistoryService({required this.database});
+  const EnergyHistoryService({
+    required this.database,
+    this.demoHistory = const DemoHistory(),
+  });
 
   final EnergyDatabase database;
+
+  /// Sumber data contoh, dipakai hanya ketika [report] dipanggil dengan
+  /// `synthetic: true`.
+  final DemoHistory demoHistory;
 
   /// Memuat riwayat lalu meringkasnya untuk satu periode.
   ///
   /// [now] bisa diinjeksi supaya hasilnya deterministik saat diuji.
+  ///
+  /// [synthetic] menutupi rentang yang benar-benar kosong dengan data contoh
+  /// dari [demoHistory] dan menandai ringkasannya `isDemo`.
+  ///
+  /// Sifatnya **fallback, bukan override**: kalau rentang itu sudah punya
+  /// pengukuran, rekamannya tetap dipakai apa adanya dan `isDemo` tidak
+  /// menyala. Jadi data asli tidak pernah bisa tersingkir hanya karena ada
+  /// parameter ini. Hasil yang ditandai `isDemo` wajib ditampilkan dengan
+  /// penanda yang jelas, dan tidak boleh dipakai di layar yang mempresentasikan
+  /// angkanya sebagai hasil pengukuran.
   Future<HistoryReport> report(
     HistoryPeriod period, {
     DateTime? now,
+    bool synthetic = false,
   }) async {
     final reference = now ?? DateTime.now();
+    final from = _rangeStart(period, reference);
+    final to = _rangeEnd(period, reference);
+    final span = to.difference(from);
+    final settings = await database.currentSettings();
+
     final deviceKey = await database.currentDeviceId();
     if (deviceKey == null) {
-      // Tidak ada meter terdaftar, jadi tidak ada riwayat. Tarif tetap
-      // diambil supaya ringkasan kosong tidak menampilkan biaya 0 yang
-      // berbeda dari asumsi yang dipakai di ringkasan berisi data.
-      final settings = await database.currentSettings();
-      return HistoryReport(
-        summary: EnergyPeriodSummary.empty(
-          period,
-          from: _rangeStart(period, reference),
-          to: reference,
-          tariffPerKwh: settings.tariffPerKwh,
-        ),
-        previous: null,
-      );
+      // Tidak ada meter terdaftar, jadi tidak ada riwayat untuk diringkas.
+      return synthetic
+          ? _syntheticReport(period, from, to, span, settings)
+          : HistoryReport(
+              summary: EnergyPeriodSummary.empty(period, from: from, to: to),
+              previous: null,
+            );
     }
 
-    final to = _rangeEnd(period, reference);
-    final from = _rangeStart(period, reference);
-    final span = to.difference(from);
-
     final currentRows = await database.historyBetween(deviceKey, from, to);
+    if (synthetic && !_hasMeasurements(currentRows)) {
+      return _syntheticReport(period, from, to, span, settings);
+    }
+
     final previousRows = span > Duration.zero
         ? await database.historyBetween(
             deviceKey,
@@ -68,7 +90,6 @@ class EnergyHistoryService {
           )
         : const <EnergyHourly>[];
 
-    final settings = await database.currentSettings();
     final summary = _summarize(
       period: period,
       from: from,
@@ -88,6 +109,50 @@ class EnergyHistoryService {
               rows: previousRows,
               settings: settings,
             ),
+    );
+  }
+
+  /// Apakah rentang ini punya sedikit pun sampel yang benar-benar terukur.
+  ///
+  /// Baris tanpa sampel dihitung kosong, sama seperti [_summarize] menghitungnya,
+  /// supaya kondisi fallback di [report] dan hasil ringkasan selalu sepakat.
+  static bool _hasMeasurements(List<EnergyHourly> rows) =>
+      rows.any((row) => !row.isEmpty);
+
+  /// Laporan yang seluruh isinya data contoh.
+  ///
+  /// Rentang periode sebelumnya juga diisi, karena tanpa itu seluruh bagian
+  /// perbandingan dan insight tren akan kosong sehingga tampilan yang sedang
+  /// dinilai tidak terlihat apa adanya.
+  HistoryReport _syntheticReport(
+    HistoryPeriod period,
+    DateTime from,
+    DateTime to,
+    Duration span,
+    DeviceSettings settings,
+  ) {
+    List<EnergyHourly> sample(DateTime start, DateTime end) =>
+        demoHistory.rows(from: start, to: end);
+
+    return HistoryReport(
+      summary: _summarize(
+        period: period,
+        from: from,
+        to: to,
+        rows: sample(from, to),
+        settings: settings,
+        isDemo: true,
+      ),
+      previous: span > Duration.zero
+          ? _summarize(
+              period: period,
+              from: from.subtract(span),
+              to: from,
+              rows: sample(from.subtract(span), from),
+              settings: settings,
+              isDemo: true,
+            )
+          : null,
     );
   }
 
@@ -117,15 +182,11 @@ class EnergyHistoryService {
     required DateTime to,
     required List<EnergyHourly> rows,
     required DeviceSettings settings,
+    bool isDemo = false,
   }) {
     final usable = rows.where((row) => !row.isEmpty).toList();
     if (usable.isEmpty) {
-      return EnergyPeriodSummary.empty(
-        period,
-        from: from,
-        to: to,
-        tariffPerKwh: settings.tariffPerKwh,
-      );
+      return EnergyPeriodSummary.empty(period, from: from, to: to);
     }
 
     var totalKwh = 0.0;
@@ -184,8 +245,6 @@ class EnergyHistoryService {
       from: from,
       to: to,
       totalKwh: totalKwh,
-      cost: totalKwh * settings.tariffPerKwh,
-      tariffPerKwh: settings.tariffPerKwh,
       co2Kg: totalKwh * settings.gridCo2KgPerKwh,
       peakPowerKw: peakPowerKw / 1000,
       peakHour: peakHour,
@@ -198,6 +257,7 @@ class EnergyHistoryService {
       average: average,
       minimums: minimums,
       maximums: maximums,
+      isDemo: isDemo,
     );
   }
 

@@ -14,12 +14,20 @@ class EnergyHistoryProvider extends ChangeNotifier {
     required this.service,
     this.engine = const RecommendationEngine(),
     this.selectedPeriod = HistoryPeriod.day,
+    this.allowSyntheticWhenEmpty = false,
   });
 
   final EnergyHistoryService service;
   final RecommendationEngine engine;
   /// Periode yang sedang dipilih pengguna.
   HistoryPeriod selectedPeriod;
+
+  /// Boleh menampilkan data contoh saat periode ini benar-benar kosong?
+  ///
+  /// Hanya instance milik layar Analisis yang menyalakannya, supaya
+  /// tampilannya bisa dinilai sebelum ESP merekam apa pun. Pembaca lain dari
+  /// provider yang sama tetap hanya mendapat data nyata.
+  final bool allowSyntheticWhenEmpty;
 
   EnergyPeriodSummary? _summary;
   EnergyPeriodSummary? _previous;
@@ -37,6 +45,11 @@ class EnergyHistoryProvider extends ChangeNotifier {
   /// True saat periode aktif belum punya satu pun baris per jam.
   bool get isEmpty => _summary?.isEmpty ?? false;
 
+  /// True saat angka yang tampil berasal dari data contoh, bukan rekaman ESP.
+  ///
+  /// Selama ini menyala, UI wajib menampilkan penanda data contoh.
+  bool get isDemo => _summary?.isDemo ?? false;
+
   /// True saat periode aktif punya data tapi belum cukup untuk dianalisis.
   bool get isThin => !isEmpty && !(_summary?.isAnalyzable ?? false);
 
@@ -48,7 +61,19 @@ class EnergyHistoryProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final report = await service.report(selectedPeriod, now: now);
+      var report = await service.report(selectedPeriod, now: now);
+
+      // Data contoh hanya menggantikan yang kosong, tidak pernah dicampur dengan
+      // rekaman asli. Begitu ESP mulai mengirim, layar ini langsung kembali ke
+      // angka pengukuran.
+      if (allowSyntheticWhenEmpty && report.summary.isEmpty) {
+        report = await service.report(
+          selectedPeriod,
+          now: now,
+          synthetic: true,
+        );
+      }
+
       // Permintaan lama yang selesai belakangan harus diabaikan, kalau tidak
       // hasil yang lebih baru akan tertimpa oleh hasil yang lebih lamanya.
       if (id != _requestId) return;

@@ -63,6 +63,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 'lebih panjang, aplikasi perlu berjalan beberapa waktu.',
           )
         else ...[
+          if (summary.isDemo) ...[
+            const _DemoBanner(),
+            const SizedBox(height: 16),
+          ],
           _SummaryCard(summary: summary, previous: history.previous),
           const SizedBox(height: 18),
           _ConsumptionChart(summary: summary),
@@ -85,7 +89,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             icon: Icons.lightbulb_outline_rounded,
           ),
           const SizedBox(height: 10),
-          if (history.isThin)
+          if (summary.isDemo)
+            const _DemoNote(text: 'Disusun dari data contoh, bukan pengukuran.')
+          else if (history.isThin)
             const EmptyState(
               icon: Icons.hourglass_empty_rounded,
               title: 'Data masih sedikit',
@@ -105,6 +111,187 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       ],
     );
   }
+}
+
+/// Peringatan bahwa seluruh angka di layar ini bukan hasil pengukuran.
+///
+/// Warna dan penanda asterisk pada sumbu dipilih supaya tidak bisa luput dari
+/// perhatian, termasuk saat layarnya difoto atau dibaca orang lain.
+class _DemoBanner extends StatelessWidget {
+  const _DemoBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      color: const Color(0xFFFFF6E0),
+      borderColor: AppColors.warning,
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.science_outlined,
+            size: 19,
+            color: Color(0xFF9A7B1A),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Data contoh, bukan pengukuran',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF7A5F12),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Meter ini belum merekam apa pun, jadi angka di bawah '
+                  'dibuat dari pola pemakaian rumah tangga dan hanya untuk '
+                  'menilai tampilan. Bukan hasil bacaan ESP, jangan dipakai '
+                  'acuan. Asterisk pada sumbu menandai data contoh.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.45,
+                    color: Color(0xFF7A5F12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Catatan kecil penanda data contoh, untuk bagian yang tidak perlu peringatan
+/// penuh karena banner di atas sudah menjelaskannya.
+class _DemoNote extends StatelessWidget {
+  const _DemoNote({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2, bottom: 10),
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline_rounded, size: 13, color: AppColors.warning),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 10.5, color: AppColors.textMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Label sumbu grafik, diberi penanda kalau angkanya data contoh.
+///
+/// Asterisk ikut pada label yang benar-benar terlihat, bukan cuma di tooltip,
+/// supaya tangkapan layar atau grafik yang dibagikan ke orang lain tetap
+/// terbaca sebagai data contoh.
+String _axisLabel(HistoryBucket bucket, bool isDemo) =>
+    isDemo ? '${bucket.label}*' : bucket.label;
+
+/// Amber untuk data contoh, abu-abu untuk rekaman asli.
+Color _axisLabelColor(bool isDemo) =>
+    isDemo ? const Color(0xFF9A7B1A) : AppColors.textMuted;
+
+/// Gaya label sumbu bawah, dipakai untuk merender sekaligus untuk mengukur
+/// lebarnya supaya keduanya tidak pernah berbeda.
+TextStyle _axisLabelStyle(bool isDemo) =>
+    TextStyle(fontSize: 9, color: _axisLabelColor(isDemo));
+
+/// Ruang yang dicadangkan untuk label sumbu kiri pada grafik garis.
+const double _leftAxisReserved = 38;
+
+/// Sisa ruang minimum antara dua label sumbu bawah.
+///
+/// Tanpa jarak ini label yang berdempetan tetap terlihat menempel dan jauh
+/// lebih sulit dibaca daripada label yang hanya bersinggungan.
+const double _axisLabelGap = 6;
+
+/// Berapa banyak bucket yang dilewati antar label sumbu bawah.
+///
+/// Dipakai oleh kedua grafik supaya label tidak pernah saling menimpa: nilai
+/// ini dihitung dari lebar label yang benar-benar dirender dan dari lebar satu
+/// slot bucket, jadi ikut menyesuaikan perangkat, ukuran huruf, dan lebar layar.
+///
+/// `SideTitles.interval` saja tidak cukup. fl_chart mengabaikan interval itu
+/// untuk `BarChart` dan tetap memanggil `getTitlesWidget` untuk setiap batang,
+/// sehingga penyaringan tetap harus dilakukan di [_axisTitle] memakai nilai dari
+/// fungsi ini.
+int _axisLabelStep({
+  required int count,
+  required double availableWidth,
+  required double labelWidth,
+}) {
+  if (count <= 1) return 1;
+  final needed = labelWidth + _axisLabelGap;
+  // Satu slot label selalu bisa dipakai, walau labelnya lebih lebar dari
+  // porsinya, jadi hasil minimalnya bukan nol.
+  final fits = (availableWidth / needed).floor().clamp(1, count);
+  return (count / fits).ceil();
+}
+
+/// Lebar label sumbu terlebar, diukur dari teks yang akan dirender.
+///
+/// Panjang tiap label berbeda-beda, misalnya `11.00` dan `1 Sep`, jadi lebar
+/// label tidak bisa ditulis sebagai konstanta. Pengukuran memakai
+/// [MediaQuery.textScalerOf] supaya pengguna yang memperbesar huruf ikut
+/// terbayar: labelnya jadi lebih rapat, bukan lebih menindih.
+double _widestAxisLabelWidth(
+  BuildContext context,
+  List<String> labels,
+  TextStyle style,
+) {
+  final painter = TextPainter(
+    textDirection: TextDirection.ltr,
+    textScaler: MediaQuery.textScalerOf(context),
+  );
+  var widest = 0.0;
+  for (final label in labels) {
+    painter
+      ..text = TextSpan(text: label, style: style)
+      ..layout();
+    if (painter.width > widest) widest = painter.width;
+  }
+  return widest;
+}
+
+/// Label sumbu bawah untuk satu bucket, atau kosong kalau bucket itu dilewati.
+///
+/// Kosongnya dikembalikan dari sini, bukan disaring fl_chart, karena
+/// `BarChart` mengabaikan `SideTitles.interval` dan memanggil fungsi ini untuk
+/// setiap batang. Tanpa penyaringan di tempat ini, 24 label "13.00" digambar
+/// di atas 24 batang selebar belasan piksel dan saling menimpa.
+Widget _axisTitle({
+  required int index,
+  required int step,
+  required List<String> labels,
+  required TitleMeta meta,
+  required TextStyle style,
+}) {
+  if (index < 0 || index >= labels.length || index % step != 0) {
+    return const SizedBox.shrink();
+  }
+  return SideTitleWidget(
+    meta: meta,
+    child: Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(labels[index], style: style),
+    ),
+  );
 }
 
 class _PeriodSelector extends StatelessWidget {
@@ -161,7 +348,7 @@ class _PeriodSelector extends StatelessWidget {
   }
 }
 
-/// Total konsumsi, biaya, dan perbandingan dengan periode sebelumnya.
+/// Total konsumsi, daya, dan perbandingan dengan periode sebelumnya.
 class _SummaryCard extends StatelessWidget {
   const _SummaryCard({required this.summary, required this.previous});
 
@@ -219,11 +406,13 @@ class _SummaryCard extends StatelessWidget {
           MetricGrid(
             tiles: [
               SummaryTile(
-                label: 'Biaya',
-                value: formatValue(summary.cost, 0),
-                suffix: 'Rp',
-                icon: Icons.payments_outlined,
-                caption: 'tarif perangkat',
+                label: 'Daya puncak',
+                value: formatValue(summary.peakPowerKw, 2),
+                suffix: 'kW',
+                icon: Icons.bolt_rounded,
+                caption: summary.peakHour == null
+                    ? 'belum ada'
+                    : 'pukul ${_hour(summary.peakHour!)}',
               ),
               SummaryTile(
                 label: 'Rata-rata daya',
@@ -247,6 +436,10 @@ class _SummaryCard extends StatelessWidget {
       ),
     );
   }
+
+  /// Label jam untuk keterangan daya puncak.
+  static String _hour(DateTime hour) =>
+      '${hour.hour.toString().padLeft(2, '0')}.${hour.minute.toString().padLeft(2, '0')}';
 }
 
 /// Kelengkapan data, karena angka lain di kartu ini bergantung padanya.
@@ -257,6 +450,21 @@ class _CoverageRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Untuk data contoh, hitungan jam yang "terekam" cuma menggambarkan berapa
+    // banyak titik rekaan yang dibuat. Menampilkannya sebagai achievement
+    // pengukuran akan menipu, jadi bar disembunyikan dan diganti keterangan.
+    if (summary.isDemo) {
+      return const Text(
+        'Cakupan di atas berasal dari data contoh, bukan kelengkapan '
+        'pengukuran meter.',
+        style: TextStyle(
+          fontSize: 10.5,
+          height: 1.4,
+          color: AppColors.textMuted,
+        ),
+      );
+    }
+
     // Berapa jam benar-benar terekam dibanding jam yang diharapkan periode ini.
     final expected = summary.expectedHours;
     final ratio = expected <= 0 ? 0.0 : summary.observedHours / expected;
@@ -327,6 +535,10 @@ class _ConsumptionChart extends StatelessWidget {
       filled.map((b) => b.kwh).reduce((a, b) => a > b ? a : b),
     );
     final peak = filled.reduce((a, b) => b.kwh > a.kwh ? b : a);
+    final labelStyle = _axisLabelStyle(summary.isDemo);
+    final axisLabels = [
+      for (final bucket in buckets) _axisLabel(bucket, summary.isDemo),
+    ];
 
     return AppCard(
       child: Column(
@@ -337,96 +549,98 @@ class _ConsumptionChart extends StatelessWidget {
             action: 'puncak ${formatValue(peak.kwh, 2)} kWh',
           ),
           const SizedBox(height: 14),
-          SizedBox(
-            height: 190,
-            child: BarChart(
-              BarChartData(
-                alignment: BarChartAlignment.spaceAround,
-                maxY: maxY,
-                barGroups: [
-                  for (final bucket in buckets)
-                    BarChartGroupData(
-                      x: buckets.indexOf(bucket),
-                      barRods: [
-                        BarChartRodData(
-                          toY: bucket.kwh,
-                          width: _barWidth(buckets.length),
-                          color: bucket.isEmpty
-                              ? AppColors.border
-                              : bucket == peak
-                                  ? AppColors.cyanAccent
-                                  : AppColors.primary,
-                          borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(6),
-                          ),
-                          backDrawRodData: BackgroundBarChartRodData(
-                            show: true,
-                            toY: maxY,
-                            color: AppColors.primaryLight,
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
-                gridData: FlGridData(
-                  drawVerticalLine: false,
-                  getDrawingHorizontalLine: (_) => FlLine(
-                    color: AppColors.border.withValues(alpha: 0.6),
-                    strokeWidth: 1,
-                    dashArray: [5, 5],
-                  ),
+          // Lebar kartu baru diketahui setelah kartu ini dibangun, sedangkan
+          // jumlah label yang muat bergantung pada lebar itu.
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final step = _axisLabelStep(
+                count: buckets.length,
+                availableWidth: constraints.maxWidth,
+                labelWidth: _widestAxisLabelWidth(
+                  context,
+                  axisLabels,
+                  labelStyle,
                 ),
-                borderData: FlBorderData(show: false),
-                titlesData: FlTitlesData(
-                  topTitles: const AxisTitles(),
-                  rightTitles: const AxisTitles(),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 26,
-                      // Setiap bucket diberi label hanya kalau muat, supaya
-                      // label tidak saling tumpang tindih di layar sempit.
-                      interval: _labelInterval(buckets.length),
-                      getTitlesWidget: (value, meta) {
-                        final index = value.toInt();
-                        if (index < 0 || index >= buckets.length) {
-                          return const SizedBox.shrink();
-                        }
-                        return SideTitleWidget(
-                          meta: meta,
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              buckets[index].label,
-                              style: const TextStyle(
-                                fontSize: 9,
-                                color: AppColors.textMuted,
+              );
+
+              return SizedBox(
+                height: 190,
+                child: BarChart(
+                  BarChartData(
+                    alignment: BarChartAlignment.spaceAround,
+                    maxY: maxY,
+                    barGroups: [
+                      for (var i = 0; i < buckets.length; i++)
+                        BarChartGroupData(
+                          x: i,
+                          barRods: [
+                            BarChartRodData(
+                              toY: buckets[i].kwh,
+                              width: _barWidth(buckets.length),
+                              color: buckets[i].isEmpty
+                                  ? AppColors.border
+                                  : buckets[i] == peak
+                                      ? AppColors.cyanAccent
+                                      : AppColors.primary,
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(6),
+                              ),
+                              backDrawRodData: BackgroundBarChartRodData(
+                                show: true,
+                                toY: maxY,
+                                color: AppColors.primaryLight,
                               ),
                             ),
+                          ],
+                        ),
+                    ],
+                    gridData: FlGridData(
+                      drawVerticalLine: false,
+                      getDrawingHorizontalLine: (_) => FlLine(
+                        color: AppColors.border.withValues(alpha: 0.6),
+                        strokeWidth: 1,
+                        dashArray: [5, 5],
+                      ),
+                    ),
+                    borderData: FlBorderData(show: false),
+                    titlesData: FlTitlesData(
+                      topTitles: const AxisTitles(),
+                      rightTitles: const AxisTitles(),
+                      bottomTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          reservedSize: 26,
+                          interval: step.toDouble(),
+                          getTitlesWidget: (value, meta) => _axisTitle(
+                            index: value.toInt(),
+                            step: step,
+                            labels: axisLabels,
+                            meta: meta,
+                            style: labelStyle,
                           ),
-                        );
-                      },
+                        ),
+                      ),
+                    ),
+                    barTouchData: BarTouchData(
+                      touchTooltipData: BarTouchTooltipData(
+                        getTooltipColor: (_) => AppColors.deepGreen,
+                        getTooltipItem: (group, _, rod, _) {
+                          final bucket = buckets[group.x];
+                          return BarTooltipItem(
+                            '${bucket.label}\n${formatValue(rod.toY, 2)} kWh',
+                            const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 11.5,
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
-                barTouchData: BarTouchData(
-                  touchTooltipData: BarTouchTooltipData(
-                    getTooltipColor: (_) => AppColors.deepGreen,
-                    getTooltipItem: (group, _, rod, _) {
-                      final bucket = buckets[group.x];
-                      return BarTooltipItem(
-                        '${bucket.label}\n${formatValue(rod.toY, 2)} kWh',
-                        const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11.5,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
+              );
+            },
           ),
         ],
       ),
@@ -445,15 +659,6 @@ class _ConsumptionChart extends StatelessWidget {
     if (count <= 16) return 9;
     if (count <= 26) return 6;
     return 4;
-  }
-
-  /// Berapa banyak bucket yang dilewati antar label sumbu bawah.
-  static double _labelInterval(int count) {
-    if (count <= 8) return 1;
-    if (count <= 14) return 2;
-    if (count <= 24) return 4;
-    if (count <= 31) return 5;
-    return 1;
   }
 
   static double _niceMax(double value) {
@@ -483,6 +688,10 @@ class _MetricHistoryChart extends StatelessWidget {
     final values = [for (final b in filled) b.metricOf(metric) ?? 0];
     final average = summary.averageOf(metric) ?? 0;
     final maxY = _niceMax(values.reduce((a, b) => a > b ? a : b));
+    final labelStyle = _axisLabelStyle(summary.isDemo);
+    final axisLabels = [
+      for (final bucket in filled) _axisLabel(bucket, summary.isDemo),
+    ];
 
     return AppCard(
       child: Column(
@@ -498,121 +707,123 @@ class _MetricHistoryChart extends StatelessWidget {
             onChanged: onMetricChanged,
           ),
           const SizedBox(height: 14),
-          SizedBox(
-            height: 170,
-            child: LineChart(
-              LineChartData(
-                minX: 0,
-                maxX: (filled.length - 1).toDouble(),
-                minY: 0,
-                maxY: maxY,
-                gridData: FlGridData(
-                  drawVerticalLine: false,
-                  getDrawingHorizontalLine: (_) => FlLine(
-                    color: AppColors.border.withValues(alpha: 0.6),
-                    strokeWidth: 1,
-                    dashArray: [5, 5],
-                  ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final step = _axisLabelStep(
+                count: filled.length,
+                availableWidth: constraints.maxWidth - _leftAxisReserved,
+                labelWidth: _widestAxisLabelWidth(
+                  context,
+                  axisLabels,
+                  labelStyle,
                 ),
-                borderData: FlBorderData(show: false),
-                extraLinesData: ExtraLinesData(
-                  horizontalLines: [
-                    HorizontalLine(
-                      y: average.clamp(0, maxY),
-                      color: AppColors.cyanAccent,
-                      strokeWidth: 1.4,
-                      dashArray: [6, 4],
+              );
+
+              return SizedBox(
+                height: 170,
+                child: LineChart(
+                  LineChartData(
+                    minX: 0,
+                    maxX: (filled.length - 1).toDouble(),
+                    minY: 0,
+                    maxY: maxY,
+                    gridData: FlGridData(
+                      drawVerticalLine: false,
+                      getDrawingHorizontalLine: (_) => FlLine(
+                        color: AppColors.border.withValues(alpha: 0.6),
+                        strokeWidth: 1,
+                        dashArray: [5, 5],
+                      ),
                     ),
-                  ],
-                ),
-                titlesData: FlTitlesData(
-                  topTitles: const AxisTitles(),
-                  rightTitles: const AxisTitles(),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 26,
-                      interval: _labelInterval(filled.length),
-                      getTitlesWidget: (value, meta) {
-                        final index = value.toInt();
-                        if (index < 0 || index >= filled.length) {
-                          return const SizedBox.shrink();
-                        }
-                        return SideTitleWidget(
-                          meta: meta,
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 6),
+                    borderData: FlBorderData(show: false),
+                    extraLinesData: ExtraLinesData(
+                      horizontalLines: [
+                        HorizontalLine(
+                          y: average.clamp(0, maxY),
+                          color: AppColors.cyanAccent,
+                          strokeWidth: 1.4,
+                          dashArray: [6, 4],
+                        ),
+                      ],
+                    ),
+                    titlesData: FlTitlesData(
+                      topTitles: const AxisTitles(),
+                      rightTitles: const AxisTitles(),
+                      bottomTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          reservedSize: 26,
+                          interval: step.toDouble(),
+                          getTitlesWidget: (value, meta) => _axisTitle(
+                            index: value.toInt(),
+                            step: step,
+                            labels: axisLabels,
+                            meta: meta,
+                            style: labelStyle,
+                          ),
+                        ),
+                      ),
+                      leftTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          reservedSize: _leftAxisReserved,
+                          getTitlesWidget: (value, meta) => SideTitleWidget(
+                            meta: meta,
                             child: Text(
-                              filled[index].label,
+                              formatValue(value, value >= 10 ? 0 : 1),
                               style: const TextStyle(
                                 fontSize: 9,
                                 color: AppColors.textMuted,
                               ),
                             ),
                           ),
-                        );
-                      },
-                    ),
-                  ),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 38,
-                      getTitlesWidget: (value, meta) => SideTitleWidget(
-                        meta: meta,
-                        child: Text(
-                          formatValue(value, value >= 10 ? 0 : 1),
-                          style: const TextStyle(
-                            fontSize: 9,
-                            color: AppColors.textMuted,
-                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-                lineTouchData: LineTouchData(
-                  touchTooltipData: LineTouchTooltipData(
-                    getTooltipColor: (_) => AppColors.deepGreen,
-                    getTooltipItems: (spots) => [
-                      for (final spot in spots)
-                        LineTooltipItem(
-                          '${formatValue(spot.y, metric.decimals)} ${metric.unit}',
-                          const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11.5,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: [
-                      for (var i = 0; i < filled.length; i++)
-                        FlSpot(i.toDouble(), values[i]),
-                    ],
-                    isCurved: true,
-                    curveSmoothness: 0.3,
-                    barWidth: 2.5,
-                    color: AppColors.primaryDark,
-                    dotData: const FlDotData(show: false),
-                    belowBarData: BarAreaData(
-                      show: true,
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          AppColors.primary.withValues(alpha: 0.35),
-                          AppColors.primary.withValues(alpha: 0.02),
+                    lineTouchData: LineTouchData(
+                      touchTooltipData: LineTouchTooltipData(
+                        getTooltipColor: (_) => AppColors.deepGreen,
+                        getTooltipItems: (spots) => [
+                          for (final spot in spots)
+                            LineTooltipItem(
+                              '${formatValue(spot.y, metric.decimals)} ${metric.unit}',
+                              const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 11.5,
+                              ),
+                            ),
                         ],
                       ),
                     ),
+                    lineBarsData: [
+                      LineChartBarData(
+                        spots: [
+                          for (var i = 0; i < filled.length; i++)
+                            FlSpot(i.toDouble(), values[i]),
+                        ],
+                        isCurved: true,
+                        curveSmoothness: 0.3,
+                        barWidth: 2.5,
+                        color: AppColors.primaryDark,
+                        dotData: const FlDotData(show: false),
+                        belowBarData: BarAreaData(
+                          show: true,
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              AppColors.primary.withValues(alpha: 0.35),
+                              AppColors.primary.withValues(alpha: 0.02),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 8),
           Row(
@@ -640,13 +851,6 @@ class _MetricHistoryChart extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static double _labelInterval(int count) {
-    if (count <= 8) return 1;
-    if (count <= 14) return 2;
-    if (count <= 24) return 4;
-    return 5;
   }
 
   static double _niceMax(double value) {

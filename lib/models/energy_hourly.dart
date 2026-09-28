@@ -82,8 +82,6 @@ class EnergyHourly {
     return energyKwh / (observedSeconds / 3600) * 1000;
   }
 
-  double costAt(double tariffPerKwh) => energyKwh * tariffPerKwh;
-
   double co2At(double gridCo2KgPerKwh) => energyKwh * gridCo2KgPerKwh;
 
   double _mean(double sum) => sampleCount == 0 ? 0 : sum / sampleCount;

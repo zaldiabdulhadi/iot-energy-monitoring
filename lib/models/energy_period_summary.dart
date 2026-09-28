@@ -87,14 +87,17 @@ class HistoryBucket {
 /// Semua angka berasal dari tabel `hourly_history`. Tidak ada konstanta tebakan:
 /// kalau datanya belum cukup, `observedHours` yang kecil akan terlihat sehingga
 /// UI menampilkan apa adanya alih-alih mengarang.
+///
+/// Pengecualiannya ada di [isDemo]: selama belum ada rekaman sama sekali, layar
+/// Analisis boleh diisi data contoh supaya tampilannya bisa dinilai. Angka seperti
+/// itu wajib dibedakan dari hasil pengukuran, jadi keduanya tidak pernah
+/// dicampur dalam satu ringkasan.
 class EnergyPeriodSummary {
   const EnergyPeriodSummary({
     required this.period,
     required this.from,
     required this.to,
     required this.totalKwh,
-    required this.cost,
-    required this.tariffPerKwh,
     required this.co2Kg,
     required this.peakPowerKw,
     required this.peakHour,
@@ -106,25 +109,20 @@ class EnergyPeriodSummary {
     required this.average,
     required this.minimums,
     required this.maximums,
+    this.isDemo = false,
   });
 
   /// Ringkasan kosong untuk periode yang belum punya data.
-  ///
-  /// [tariffPerKwh] diteruskan supaya asumsi tarifnya sama dengan ringkasan
-  /// yang benar-benar berisi data.
   factory EnergyPeriodSummary.empty(
     HistoryPeriod period, {
     required DateTime from,
     required DateTime to,
-    double tariffPerKwh = 0,
   }) {
     return EnergyPeriodSummary(
       period: period,
       from: from,
       to: to,
       totalKwh: 0,
-      cost: 0,
-      tariffPerKwh: tariffPerKwh,
       co2Kg: 0,
       peakPowerKw: 0,
       peakHour: null,
@@ -145,15 +143,6 @@ class EnergyPeriodSummary {
 
   /// Total konsumsi energi periode ini, hasil penjumlahan kWh per jam.
   final double totalKwh;
-
-  /// Estimasi biaya memakai tarif perangkat.
-  final double cost;
-
-  /// Tarif per kWh yang dipakai menghitung [cost].
-  ///
-  /// Disimpan bersama ringkasan supaya UI bisa menampilkan asumsi tarifnya,
-  /// bukan cuma hasil perkalian yang tidak bisa ditelusuri.
-  final double tariffPerKwh;
 
   /// Estimasi jejak karbon memakai faktor emisi grid perangkat.
   final double co2Kg;
@@ -183,6 +172,13 @@ class EnergyPeriodSummary {
   final Map<EnergyMetric, double> average;
   final Map<EnergyMetric, double?> minimums;
   final Map<EnergyMetric, double?> maximums;
+
+  /// True kalau angka ringkasan ini berasal dari data contoh, bukan rekaman ESP.
+  ///
+  /// Layar wajib menampilkan penanda selama ini true. Field lain seperti
+  /// `observedHours` dan `averageCoveragePct` untuk data contoh hanya
+  /// menggambarkan kelengkapan data contoh, bukan kelengkapan pengukuran.
+  final bool isDemo;
 
   bool get isEmpty => observedHours == 0;
 

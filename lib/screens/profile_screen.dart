@@ -47,7 +47,7 @@ class ProfileScreen extends StatelessWidget {
             _SettingTile(
               icon: Icons.straighten_rounded,
               label: 'Satuan energi',
-              subtitle: 'kWh · Rupiah',
+              subtitle: 'kWh',
             ),
           ],
         ),
@@ -224,11 +224,11 @@ class ProfileScreen extends StatelessWidget {
               MetricGrid(
                 tiles: [
                   SummaryTile(
-                    label: 'Estimasi biaya',
-                    value: formatValue(summary.cost, 0),
-                    suffix: 'Rp',
-                    icon: Icons.payments_outlined,
-                    caption: 'tarif ${formatValue(summary.tariffPerKwh, 0)}/kWh',
+                    label: 'Rata-rata daya',
+                    value: formatValue(summary.averagePowerKw, 2),
+                    suffix: 'kW',
+                    icon: Icons.electric_meter_rounded,
+                    caption: 'seluruh periode',
                   ),
                   SummaryTile(
                     label: 'Data terekam',

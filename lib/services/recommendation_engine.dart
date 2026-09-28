@@ -111,8 +111,8 @@ class RecommendationEngine {
         : '';
     final shiftHint = granularity == HistoryGranularity.hour
         ? 'Memindahkan beban yang bisa ditunda ke jam sepi di sekitar '
-            'pukul 01.00-04.00 memangkas biaya tanpa mengurangi kenyamanan.'
-        : 'Jam-jam sepi di periode ini justru paling murah untuk menjalankan '
+            'pukul 01.00-04.00 memangkas konsumsi tanpa mengurangi kenyamanan.'
+        : 'Jam-jam sepi di periode ini justru paling hemat untuk menjalankan '
             'beban berat.';
 
     return [
@@ -291,7 +291,7 @@ class RecommendationEngine {
         title: 'Sebagian angka periode ini adalah estimasi',
         body: 'Rincian: ${parts.join(' dan ')}. Penyebab paling umum koneksi '
             'ke ESP terputus sementara. Angka tren masih berguna sebagai arah, '
-            'tapi jangan dipakai untuk tagihan.',
+            'tapi jangan dipakai sebagai laporan resmi.',
       ),
     ];
   }

@@ -77,4 +77,28 @@ void main() {
 
     await _disposeApp(tester);
   });
+
+  testWidgets('Analisis menandai data contoh, Dashboard tidak', (tester) async {
+    await _pumpApp(tester);
+
+    const banner = 'Data contoh, bukan pengukuran';
+    expect(
+      find.text(banner),
+      findsNothing,
+      reason: 'dashboard menampilkan pengukuran langsung, bukan data contoh',
+    );
+
+    await tester.tap(find.text('Analisis'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Meter kosong di test, jadi Analisis boleh menampilkan data contoh, tapi
+    // hanya selama ditandai jelas.
+    expect(find.text(banner), findsOneWidget);
+
+    // Tidak boleh ada Rupiah di mana pun.
+    expect(find.textContaining('Rp'), findsNothing);
+    expect(find.textContaining('Biaya'), findsNothing);
+
+    await _disposeApp(tester);
+  });
 }

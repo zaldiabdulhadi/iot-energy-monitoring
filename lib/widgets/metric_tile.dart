@@ -193,13 +193,22 @@ class SummaryTile extends StatelessWidget {
           ),
           if (caption != null) ...[
             const SizedBox(height: 2),
-            Text(
-              caption!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 9.5,
-                color: AppColors.textMuted,
+            // Caption dikunci ke satu baris dan hanya menyusut kalau tidak muat.
+            // `MetricGrid` memakai rasio aspect tetap, jadi tinggi selnya tidak
+            // ikut isi; caption dua baris akan membuat tile meluber.
+            SizedBox(
+              width: double.infinity,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  caption!,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    color: AppColors.textMuted,
+                  ),
+                ),
               ),
             ),
           ],

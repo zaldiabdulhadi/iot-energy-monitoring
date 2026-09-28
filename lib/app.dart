@@ -33,6 +33,10 @@ class SmartEnergyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         Provider<EnergyDatabase>.value(value: database),
+        // Dipisah dari provider di bawahnya karena tab Analisis memakai
+        // instans ringkasan-nya sendiri, dan itu instans harus dibangun dari
+        // layanan yang sama supaya tidak ada dua pembacaan database berbeda.
+        Provider<EnergyHistoryService>.value(value: history),
         ChangeNotifierProvider(
           create: (_) => EnergyDataProvider(
             recorder: EnergyRecorder(

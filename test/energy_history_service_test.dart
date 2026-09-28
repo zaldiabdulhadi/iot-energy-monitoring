@@ -100,8 +100,8 @@ void main() {
       expect(report.summary.isEmpty, isTrue);
       expect(report.summary.totalKwh, 0);
       expect(report.summary.observedHours, 0);
-      // Tarif tetap diteruskan supaya tampilan biaya konsisten.
-      expect(report.summary.tariffPerKwh, 1650);
+      // Ringkasan kosong bukan data contoh, jadi tidak boleh memakai jalur itu.
+      expect(report.summary.isDemo, isFalse);
     });
   });
 
@@ -260,6 +260,80 @@ void main() {
       final report = await service.report(HistoryPeriod.day, now: now);
 
       expect(report.summary.changePct(report.previous), isNull);
+    });
+  });
+
+  group('data contoh', () {
+    test('tidak dipakai kalau pemanggil tidak memintanya', () async {
+      final report = await service.report(HistoryPeriod.day, now: now);
+
+      expect(report.summary.isEmpty, isTrue);
+      expect(report.summary.isDemo, isFalse);
+      expect(report.previous, isNull);
+    });
+
+    test('mengisi periode kosong dan menandai dirinya sebagai contoh', () async {
+      final report = await service.report(
+        HistoryPeriod.day,
+        now: now,
+        synthetic: true,
+      );
+
+      expect(report.summary.isDemo, isTrue);
+      expect(report.summary.isEmpty, isFalse);
+      expect(report.summary.totalKwh, greaterThan(0));
+      // 24 titik per jam supaya grafik dan tabelnya langsung terisi.
+      expect(report.summary.buckets.length, 24);
+      expect(
+        report.summary.buckets.every((b) => !b.isEmpty),
+        isTrue,
+        reason: 'setiap jam harus punya titik supaya grafik tidak bolong',
+      );
+    });
+
+    test('periode sebelumnya juga diisi agar perbandingan tetap ada', () async {
+      final report = await service.report(
+        HistoryPeriod.day,
+        now: now,
+        synthetic: true,
+      );
+
+      expect(report.previous, isNotNull);
+      expect(report.previous!.isDemo, isTrue);
+      expect(report.previous!.totalKwh, greaterThan(0));
+    });
+
+    test('tidak pernah menggantikan rekaman yang benar-benar ada', () async {
+      await seedHour(DateTime(2026, 3, 15, 10));
+
+      final report = await service.report(
+        HistoryPeriod.day,
+        now: now,
+        synthetic: true,
+      );
+
+      // Isi tetap persis satu jam yang tersimpan, bukan 24 jam rekaan.
+      expect(report.summary.observedHours, 1);
+      expect(report.summary.isDemo, isFalse);
+    });
+
+    test('nilai metriknya masuk rentang meter yang wajar', () async {
+      final report = await service.report(
+        HistoryPeriod.day,
+        now: now,
+        synthetic: true,
+      );
+      final summary = report.summary;
+
+      expect(summary.averageOf(EnergyMetric.voltage), inInclusiveRange(210, 240));
+      expect(summary.averageOf(EnergyMetric.frequency), inInclusiveRange(49.5, 50.5));
+      expect(summary.averageOf(EnergyMetric.powerFactor), greaterThanOrEqualTo(0.9));
+      expect(summary.averagePowerKw, inInclusiveRange(0.1, 1.5));
+      expect(
+        EnergyMetric.powerFactor.classify(summary.averagePowerFactor!),
+        MetricStatus.healthy,
+        reason: 'data contoh tidak boleh terlihat seperti gangguan PF',
+      );
     });
   });
 }

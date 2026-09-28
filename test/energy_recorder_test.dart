@@ -275,7 +275,6 @@ void main() {
         ],
       );
 
-      expect(hourly.costAt(1650), closeTo(3300, 1e-9));
       expect(hourly.co2At(0.42), closeTo(0.84, 1e-9));
       expect(hourly.averageWattsFromEnergy, closeTo(2000, 1e-9));
     });

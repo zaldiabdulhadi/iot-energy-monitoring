@@ -74,6 +74,7 @@ class AppCard extends StatelessWidget {
     this.onTap,
     this.gradient,
     this.borderColor,
+    this.color,
   });
 
   final Widget child;
@@ -82,10 +83,14 @@ class AppCard extends StatelessWidget {
   final Gradient? gradient;
   final Color? borderColor;
 
+  /// Warna isi kartu. Diabaikan kalau [gradient] diberikan, karena keduanya
+  /// tidak bisa berlaku bersamaan pada satu `BoxDecoration`.
+  final Color? color;
+
   @override
   Widget build(BuildContext context) {
     final decoration = BoxDecoration(
-      color: gradient == null ? AppColors.card : null,
+      color: gradient != null ? null : (color ?? AppColors.card),
       gradient: gradient,
       borderRadius: BorderRadius.circular(20),
       border: Border.all(color: borderColor ?? AppColors.border),
