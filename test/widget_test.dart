@@ -7,7 +7,11 @@ import 'package:smart_energy/data/local/app_database.dart';
 Future<void> _pumpApp(WidgetTester tester) async {
   final database = EnergyDatabase.forTesting(NativeDatabase.memory());
   addTearDown(database.close);
-  await tester.pumpWidget(SmartEnergyApp(database: database));
+  // Layar instruksi dimatikan supaya test bisa langsung berinteraksi dengan
+  // tab. Perilaku layar instruksinya sendiri diuji di `onboarding_test.dart`.
+  await tester.pumpWidget(
+    SmartEnergyApp(database: database, showIntroOnLaunch: false),
+  );
   await tester.pump();
 }
 

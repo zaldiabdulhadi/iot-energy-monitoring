@@ -19,6 +19,7 @@ EnergyHourly rollupMinutes({
   var sampleCount = 0;
   var observedSeconds = 0.0;
   var estimatedIntervals = 0;
+  var sawDemo = false;
 
   double? powerMin;
   double? powerMax;
@@ -39,6 +40,7 @@ EnergyHourly rollupMinutes({
     sampleCount += row.sampleCount;
     observedSeconds += row.observedSeconds;
     estimatedIntervals += row.estimatedIntervals;
+    if (row.isDemo) sawDemo = true;
 
     powerMin = _lower(powerMin, row.powerMin);
     powerMax = _higher(powerMax, row.powerMax);
@@ -83,6 +85,7 @@ EnergyHourly rollupMinutes({
     estimatedIntervals: estimatedIntervals,
     coveragePct: coveragePct,
     quality: quality,
+    isDemo: sawDemo,
   );
 }
 

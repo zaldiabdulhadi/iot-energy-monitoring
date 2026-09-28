@@ -33,7 +33,12 @@ List<Map<String, dynamic>> decodeHourlyBody(http.Request request) =>
 bool isHourlyPath(http.Request request) =>
     request.url.path.endsWith('/energy_hourly');
 
-EnergyHourly _hourly(String deviceKey, DateTime hourStart) => EnergyHourly(
+EnergyHourly _hourly(
+  String deviceKey,
+  DateTime hourStart, {
+  bool isDemo = false,
+}) =>
+    EnergyHourly(
       deviceKey: deviceKey,
       hourStart: hourStart,
       energyKwh: 1.5,
@@ -42,6 +47,7 @@ EnergyHourly _hourly(String deviceKey, DateTime hourStart) => EnergyHourly(
       observedSeconds: 3595,
       coveragePct: 99.86,
       quality: EnergyDataQuality.complete,
+      isDemo: isDemo,
     );
 
 void main() {
@@ -90,8 +96,12 @@ void main() {
     );
   }
 
-  Future<void> seedPendingHour(DateTime hourStart) => database.upsertHourly(
-        hourly: _hourly(deviceKey, hourStart),
+  Future<void> seedPendingHour(
+    DateTime hourStart, {
+    bool isDemo = false,
+  }) =>
+      database.upsertHourly(
+        hourly: _hourly(deviceKey, hourStart, isDemo: isDemo),
         now: hourStart.add(const Duration(minutes: 5)),
       );
 
@@ -433,6 +443,94 @@ void main() {
 
       await service.syncNow();
       expect(seen, 'rahasia');
+    });
+
+    group('penyaringan data simulasi', () {
+      test('jam demo tidak diunggah secara default', () async {
+        final uploaded = <Map<String, dynamic>>[];
+        final service = serviceWith((request) async {
+          if (isHourlyPath(request)) {
+            uploaded.addAll(decodeHourlyBody(request));
+          }
+          return postgrestReply(request, '[]');
+        });
+
+        await seedPendingHour(DateTime(2026, 9, 25, 10), isDemo: true);
+        final report = await service.syncNow();
+
+        expect(uploaded, isEmpty);
+        expect(report.uploaded, 0);
+        expect(report.failed, 0);
+      });
+
+      test('jam demo tetap pending, tidak ditandai synced atau failed',
+          () async {
+        final service = serviceWith((request) async => postgrestReply(request, '[]'));
+
+        await seedPendingHour(DateTime(2026, 9, 25, 10), isDemo: true);
+        await service.syncNow();
+
+        final row = await database.findHour(deviceKey, DateTime(2026, 9, 25, 10));
+        expect(row, isNotNull);
+        expect(row!.syncState, 'pending');
+        expect(row.attempts, 0);
+      });
+
+      test('badge antrean tidak menghitung jam simulasi', () async {
+        final service = serviceWith((request) async => postgrestReply(request, '[]'));
+
+        await seedPendingHour(DateTime(2026, 9, 25, 10), isDemo: true);
+        await service.syncNow();
+
+        // Kalau jam demo ikut dihitung, label "Menunggu 1 jam" akan menggantung
+        // selamanya padahal tidak ada yang bisa diunggah.
+        expect(await database.countPending(deviceKey), 0);
+        expect(await database.countPendingDemo(deviceKey), 1);
+      });
+
+      test('jam pengukuran tetap terunggah walau ada jam demo', () async {
+        final uploaded = <Map<String, dynamic>>[];
+        final service = serviceWith((request) async {
+          if (isHourlyPath(request)) {
+            uploaded.addAll(decodeHourlyBody(request));
+          }
+          return postgrestReply(request, '[]');
+        });
+
+        await seedPendingHour(DateTime(2026, 9, 25, 10), isDemo: true);
+        await seedPendingHour(DateTime(2026, 9, 25, 11));
+        final report = await service.syncNow();
+
+        expect(uploaded, hasLength(1));
+        expect(uploaded.single['hour_start'],
+            DateTime(2026, 9, 25, 11).toUtc().toIso8601String());
+        expect(report.uploaded, 1);
+      });
+
+      test('includeDemo mengunggah jam simulasi dengan is_demo menyala',
+          () async {
+        final uploaded = <Map<String, dynamic>>[];
+        final service = EnergySyncService(
+          database: database,
+          remote: EnergyRemoteDataSource(
+            newClient((request) async {
+              if (isHourlyPath(request)) {
+                uploaded.addAll(decodeHourlyBody(request));
+              }
+              return postgrestReply(request, '[]');
+            }),
+          ),
+          includeDemo: true,
+        );
+
+        await seedPendingHour(DateTime(2026, 9, 25, 10), isDemo: true);
+        final report = await service.syncNow();
+
+        expect(uploaded, hasLength(1));
+        // Penanda ikut terkirim supaya server tetap bisa membedakan.
+        expect(uploaded.single['is_demo'], isTrue);
+        expect(report.uploaded, 1);
+      });
     });
   });
 }

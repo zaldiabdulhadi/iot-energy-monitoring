@@ -25,7 +25,9 @@ void main() {
 
     final database = EnergyDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
-    await tester.pumpWidget(SmartEnergyApp(database: database));
+    await tester.pumpWidget(
+      SmartEnergyApp(database: database, showIntroOnLaunch: false),
+    );
     await tester.pump();
   }
 
@@ -103,7 +105,9 @@ void main() {
 
       final database = EnergyDatabase.forTesting(NativeDatabase.memory());
       addTearDown(database.close);
-      await tester.pumpWidget(SmartEnergyApp(database: database));
+      await tester.pumpWidget(
+        SmartEnergyApp(database: database, showIntroOnLaunch: false),
+      );
       await tester.pump();
 
       final bar = tester.getRect(find.byType(NavigationBar));

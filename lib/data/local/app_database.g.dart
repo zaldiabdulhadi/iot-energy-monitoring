@@ -696,6 +696,19 @@ class $MinuteAggregatesTable extends MinuteAggregates
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _isDemoMeta = const VerificationMeta('isDemo');
+  @override
+  late final GeneratedColumn<bool> isDemo = GeneratedColumn<bool>(
+    'is_demo',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_demo" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     deviceKey,
@@ -717,6 +730,7 @@ class $MinuteAggregatesTable extends MinuteAggregates
     sampleCount,
     observedSeconds,
     estimatedIntervals,
+    isDemo,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -875,6 +889,12 @@ class $MinuteAggregatesTable extends MinuteAggregates
         ),
       );
     }
+    if (data.containsKey('is_demo')) {
+      context.handle(
+        _isDemoMeta,
+        isDemo.isAcceptableOrUnknown(data['is_demo']!, _isDemoMeta),
+      );
+    }
     return context;
   }
 
@@ -960,6 +980,10 @@ class $MinuteAggregatesTable extends MinuteAggregates
         DriftSqlType.int,
         data['${effectivePrefix}estimated_intervals'],
       )!,
+      isDemo: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_demo'],
+      )!,
     );
   }
 
@@ -990,6 +1014,17 @@ class MinuteAggregateRow extends DataClass
   final int sampleCount;
   final double observedSeconds;
   final int estimatedIntervals;
+
+  /// Menandai menit ini sebagai hasil simulasi, bukan pengukuran ESP.
+  ///
+  /// Satu-satunya sumber nilai true adalah mode demo, jadi kolom ini adalah
+  /// catatan asal-usul yang dibawa dari menit ke jam di
+  /// [rollupMinutes](hourly_rollup.dart). Tanpa penanda ini, angka karangan
+  /// akan tersimpan dengan bentuk yang persis sama seperti pengukuran.
+  ///
+  /// Default false supaya rekaman jalur ESP, termasuk data yang sudah tersimpan
+  /// sebelum kolom ini ada, tidak ikut ditandai secara tidak sengaja.
+  final bool isDemo;
   const MinuteAggregateRow({
     required this.deviceKey,
     required this.minuteStart,
@@ -1010,6 +1045,7 @@ class MinuteAggregateRow extends DataClass
     required this.sampleCount,
     required this.observedSeconds,
     required this.estimatedIntervals,
+    required this.isDemo,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1049,6 +1085,7 @@ class MinuteAggregateRow extends DataClass
     map['sample_count'] = Variable<int>(sampleCount);
     map['observed_seconds'] = Variable<double>(observedSeconds);
     map['estimated_intervals'] = Variable<int>(estimatedIntervals);
+    map['is_demo'] = Variable<bool>(isDemo);
     return map;
   }
 
@@ -1089,6 +1126,7 @@ class MinuteAggregateRow extends DataClass
       sampleCount: Value(sampleCount),
       observedSeconds: Value(observedSeconds),
       estimatedIntervals: Value(estimatedIntervals),
+      isDemo: Value(isDemo),
     );
   }
 
@@ -1117,6 +1155,7 @@ class MinuteAggregateRow extends DataClass
       sampleCount: serializer.fromJson<int>(json['sampleCount']),
       observedSeconds: serializer.fromJson<double>(json['observedSeconds']),
       estimatedIntervals: serializer.fromJson<int>(json['estimatedIntervals']),
+      isDemo: serializer.fromJson<bool>(json['isDemo']),
     );
   }
   @override
@@ -1142,6 +1181,7 @@ class MinuteAggregateRow extends DataClass
       'sampleCount': serializer.toJson<int>(sampleCount),
       'observedSeconds': serializer.toJson<double>(observedSeconds),
       'estimatedIntervals': serializer.toJson<int>(estimatedIntervals),
+      'isDemo': serializer.toJson<bool>(isDemo),
     };
   }
 
@@ -1165,6 +1205,7 @@ class MinuteAggregateRow extends DataClass
     int? sampleCount,
     double? observedSeconds,
     int? estimatedIntervals,
+    bool? isDemo,
   }) => MinuteAggregateRow(
     deviceKey: deviceKey ?? this.deviceKey,
     minuteStart: minuteStart ?? this.minuteStart,
@@ -1187,6 +1228,7 @@ class MinuteAggregateRow extends DataClass
     sampleCount: sampleCount ?? this.sampleCount,
     observedSeconds: observedSeconds ?? this.observedSeconds,
     estimatedIntervals: estimatedIntervals ?? this.estimatedIntervals,
+    isDemo: isDemo ?? this.isDemo,
   );
   MinuteAggregateRow copyWithCompanion(MinuteAggregatesCompanion data) {
     return MinuteAggregateRow(
@@ -1237,6 +1279,7 @@ class MinuteAggregateRow extends DataClass
       estimatedIntervals: data.estimatedIntervals.present
           ? data.estimatedIntervals.value
           : this.estimatedIntervals,
+      isDemo: data.isDemo.present ? data.isDemo.value : this.isDemo,
     );
   }
 
@@ -1261,7 +1304,8 @@ class MinuteAggregateRow extends DataClass
           ..write('powerFactorMin: $powerFactorMin, ')
           ..write('sampleCount: $sampleCount, ')
           ..write('observedSeconds: $observedSeconds, ')
-          ..write('estimatedIntervals: $estimatedIntervals')
+          ..write('estimatedIntervals: $estimatedIntervals, ')
+          ..write('isDemo: $isDemo')
           ..write(')'))
         .toString();
   }
@@ -1287,6 +1331,7 @@ class MinuteAggregateRow extends DataClass
     sampleCount,
     observedSeconds,
     estimatedIntervals,
+    isDemo,
   );
   @override
   bool operator ==(Object other) =>
@@ -1310,7 +1355,8 @@ class MinuteAggregateRow extends DataClass
           other.powerFactorMin == this.powerFactorMin &&
           other.sampleCount == this.sampleCount &&
           other.observedSeconds == this.observedSeconds &&
-          other.estimatedIntervals == this.estimatedIntervals);
+          other.estimatedIntervals == this.estimatedIntervals &&
+          other.isDemo == this.isDemo);
 }
 
 class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
@@ -1333,6 +1379,7 @@ class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
   final Value<int> sampleCount;
   final Value<double> observedSeconds;
   final Value<int> estimatedIntervals;
+  final Value<bool> isDemo;
   final Value<int> rowid;
   const MinuteAggregatesCompanion({
     this.deviceKey = const Value.absent(),
@@ -1354,6 +1401,7 @@ class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
     this.sampleCount = const Value.absent(),
     this.observedSeconds = const Value.absent(),
     this.estimatedIntervals = const Value.absent(),
+    this.isDemo = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MinuteAggregatesCompanion.insert({
@@ -1376,6 +1424,7 @@ class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
     this.sampleCount = const Value.absent(),
     this.observedSeconds = const Value.absent(),
     this.estimatedIntervals = const Value.absent(),
+    this.isDemo = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : deviceKey = Value(deviceKey),
        minuteStart = Value(minuteStart);
@@ -1399,6 +1448,7 @@ class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
     Expression<int>? sampleCount,
     Expression<double>? observedSeconds,
     Expression<int>? estimatedIntervals,
+    Expression<bool>? isDemo,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1421,6 +1471,7 @@ class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
       if (sampleCount != null) 'sample_count': sampleCount,
       if (observedSeconds != null) 'observed_seconds': observedSeconds,
       if (estimatedIntervals != null) 'estimated_intervals': estimatedIntervals,
+      if (isDemo != null) 'is_demo': isDemo,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1445,6 +1496,7 @@ class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
     Value<int>? sampleCount,
     Value<double>? observedSeconds,
     Value<int>? estimatedIntervals,
+    Value<bool>? isDemo,
     Value<int>? rowid,
   }) {
     return MinuteAggregatesCompanion(
@@ -1467,6 +1519,7 @@ class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
       sampleCount: sampleCount ?? this.sampleCount,
       observedSeconds: observedSeconds ?? this.observedSeconds,
       estimatedIntervals: estimatedIntervals ?? this.estimatedIntervals,
+      isDemo: isDemo ?? this.isDemo,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1531,6 +1584,9 @@ class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
     if (estimatedIntervals.present) {
       map['estimated_intervals'] = Variable<int>(estimatedIntervals.value);
     }
+    if (isDemo.present) {
+      map['is_demo'] = Variable<bool>(isDemo.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1559,6 +1615,7 @@ class MinuteAggregatesCompanion extends UpdateCompanion<MinuteAggregateRow> {
           ..write('sampleCount: $sampleCount, ')
           ..write('observedSeconds: $observedSeconds, ')
           ..write('estimatedIntervals: $estimatedIntervals, ')
+          ..write('isDemo: $isDemo, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1812,6 +1869,19 @@ class $HourlyHistoryTable extends HourlyHistory
     requiredDuringInsert: false,
     defaultValue: const Constant('partial'),
   );
+  static const VerificationMeta _isDemoMeta = const VerificationMeta('isDemo');
+  @override
+  late final GeneratedColumn<bool> isDemo = GeneratedColumn<bool>(
+    'is_demo',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_demo" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _recordedAtMeta = const VerificationMeta(
     'recordedAt',
   );
@@ -1846,6 +1916,7 @@ class $HourlyHistoryTable extends HourlyHistory
     estimatedIntervals,
     coveragePct,
     dataQuality,
+    isDemo,
     recordedAt,
   ];
   @override
@@ -2020,6 +2091,12 @@ class $HourlyHistoryTable extends HourlyHistory
         ),
       );
     }
+    if (data.containsKey('is_demo')) {
+      context.handle(
+        _isDemoMeta,
+        isDemo.isAcceptableOrUnknown(data['is_demo']!, _isDemoMeta),
+      );
+    }
     if (data.containsKey('recorded_at')) {
       context.handle(
         _recordedAtMeta,
@@ -2121,6 +2198,10 @@ class $HourlyHistoryTable extends HourlyHistory
         DriftSqlType.string,
         data['${effectivePrefix}data_quality'],
       )!,
+      isDemo: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_demo'],
+      )!,
       recordedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}recorded_at'],
@@ -2157,6 +2238,14 @@ class HourlyHistoryRow extends DataClass
   final int estimatedIntervals;
   final double coveragePct;
   final String dataQuality;
+
+  /// Dipertahankan dari [MinuteAggregates.isDemo] saat jam ditutup.
+  ///
+  /// Analytics memakai penanda ini untuk menandai angka yang bukan pengukuran.
+  /// Sekali jam ditandai, nilainya tidak bisa kembali menjadi false: baris
+  /// ditulis ulang dengan `insertOnConflictUpdate`, jadi jam yang tadinya
+  /// sudah murni dan lalu tercemar simulasi akan ikut tercemar.
+  final bool isDemo;
   final DateTime recordedAt;
   const HourlyHistoryRow({
     required this.deviceKey,
@@ -2180,6 +2269,7 @@ class HourlyHistoryRow extends DataClass
     required this.estimatedIntervals,
     required this.coveragePct,
     required this.dataQuality,
+    required this.isDemo,
     required this.recordedAt,
   });
   @override
@@ -2222,6 +2312,7 @@ class HourlyHistoryRow extends DataClass
     map['estimated_intervals'] = Variable<int>(estimatedIntervals);
     map['coverage_pct'] = Variable<double>(coveragePct);
     map['data_quality'] = Variable<String>(dataQuality);
+    map['is_demo'] = Variable<bool>(isDemo);
     map['recorded_at'] = Variable<DateTime>(recordedAt);
     return map;
   }
@@ -2265,6 +2356,7 @@ class HourlyHistoryRow extends DataClass
       estimatedIntervals: Value(estimatedIntervals),
       coveragePct: Value(coveragePct),
       dataQuality: Value(dataQuality),
+      isDemo: Value(isDemo),
       recordedAt: Value(recordedAt),
     );
   }
@@ -2296,6 +2388,7 @@ class HourlyHistoryRow extends DataClass
       estimatedIntervals: serializer.fromJson<int>(json['estimatedIntervals']),
       coveragePct: serializer.fromJson<double>(json['coveragePct']),
       dataQuality: serializer.fromJson<String>(json['dataQuality']),
+      isDemo: serializer.fromJson<bool>(json['isDemo']),
       recordedAt: serializer.fromJson<DateTime>(json['recordedAt']),
     );
   }
@@ -2324,6 +2417,7 @@ class HourlyHistoryRow extends DataClass
       'estimatedIntervals': serializer.toJson<int>(estimatedIntervals),
       'coveragePct': serializer.toJson<double>(coveragePct),
       'dataQuality': serializer.toJson<String>(dataQuality),
+      'isDemo': serializer.toJson<bool>(isDemo),
       'recordedAt': serializer.toJson<DateTime>(recordedAt),
     };
   }
@@ -2350,6 +2444,7 @@ class HourlyHistoryRow extends DataClass
     int? estimatedIntervals,
     double? coveragePct,
     String? dataQuality,
+    bool? isDemo,
     DateTime? recordedAt,
   }) => HourlyHistoryRow(
     deviceKey: deviceKey ?? this.deviceKey,
@@ -2375,6 +2470,7 @@ class HourlyHistoryRow extends DataClass
     estimatedIntervals: estimatedIntervals ?? this.estimatedIntervals,
     coveragePct: coveragePct ?? this.coveragePct,
     dataQuality: dataQuality ?? this.dataQuality,
+    isDemo: isDemo ?? this.isDemo,
     recordedAt: recordedAt ?? this.recordedAt,
   );
   HourlyHistoryRow copyWithCompanion(HourlyHistoryCompanion data) {
@@ -2430,6 +2526,7 @@ class HourlyHistoryRow extends DataClass
       dataQuality: data.dataQuality.present
           ? data.dataQuality.value
           : this.dataQuality,
+      isDemo: data.isDemo.present ? data.isDemo.value : this.isDemo,
       recordedAt: data.recordedAt.present
           ? data.recordedAt.value
           : this.recordedAt,
@@ -2460,6 +2557,7 @@ class HourlyHistoryRow extends DataClass
           ..write('estimatedIntervals: $estimatedIntervals, ')
           ..write('coveragePct: $coveragePct, ')
           ..write('dataQuality: $dataQuality, ')
+          ..write('isDemo: $isDemo, ')
           ..write('recordedAt: $recordedAt')
           ..write(')'))
         .toString();
@@ -2488,6 +2586,7 @@ class HourlyHistoryRow extends DataClass
     estimatedIntervals,
     coveragePct,
     dataQuality,
+    isDemo,
     recordedAt,
   ]);
   @override
@@ -2515,6 +2614,7 @@ class HourlyHistoryRow extends DataClass
           other.estimatedIntervals == this.estimatedIntervals &&
           other.coveragePct == this.coveragePct &&
           other.dataQuality == this.dataQuality &&
+          other.isDemo == this.isDemo &&
           other.recordedAt == this.recordedAt);
 }
 
@@ -2540,6 +2640,7 @@ class HourlyHistoryCompanion extends UpdateCompanion<HourlyHistoryRow> {
   final Value<int> estimatedIntervals;
   final Value<double> coveragePct;
   final Value<String> dataQuality;
+  final Value<bool> isDemo;
   final Value<DateTime> recordedAt;
   final Value<int> rowid;
   const HourlyHistoryCompanion({
@@ -2564,6 +2665,7 @@ class HourlyHistoryCompanion extends UpdateCompanion<HourlyHistoryRow> {
     this.estimatedIntervals = const Value.absent(),
     this.coveragePct = const Value.absent(),
     this.dataQuality = const Value.absent(),
+    this.isDemo = const Value.absent(),
     this.recordedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -2589,6 +2691,7 @@ class HourlyHistoryCompanion extends UpdateCompanion<HourlyHistoryRow> {
     this.estimatedIntervals = const Value.absent(),
     this.coveragePct = const Value.absent(),
     this.dataQuality = const Value.absent(),
+    this.isDemo = const Value.absent(),
     required DateTime recordedAt,
     this.rowid = const Value.absent(),
   }) : deviceKey = Value(deviceKey),
@@ -2616,6 +2719,7 @@ class HourlyHistoryCompanion extends UpdateCompanion<HourlyHistoryRow> {
     Expression<int>? estimatedIntervals,
     Expression<double>? coveragePct,
     Expression<String>? dataQuality,
+    Expression<bool>? isDemo,
     Expression<DateTime>? recordedAt,
     Expression<int>? rowid,
   }) {
@@ -2641,6 +2745,7 @@ class HourlyHistoryCompanion extends UpdateCompanion<HourlyHistoryRow> {
       if (estimatedIntervals != null) 'estimated_intervals': estimatedIntervals,
       if (coveragePct != null) 'coverage_pct': coveragePct,
       if (dataQuality != null) 'data_quality': dataQuality,
+      if (isDemo != null) 'is_demo': isDemo,
       if (recordedAt != null) 'recorded_at': recordedAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -2668,6 +2773,7 @@ class HourlyHistoryCompanion extends UpdateCompanion<HourlyHistoryRow> {
     Value<int>? estimatedIntervals,
     Value<double>? coveragePct,
     Value<String>? dataQuality,
+    Value<bool>? isDemo,
     Value<DateTime>? recordedAt,
     Value<int>? rowid,
   }) {
@@ -2693,6 +2799,7 @@ class HourlyHistoryCompanion extends UpdateCompanion<HourlyHistoryRow> {
       estimatedIntervals: estimatedIntervals ?? this.estimatedIntervals,
       coveragePct: coveragePct ?? this.coveragePct,
       dataQuality: dataQuality ?? this.dataQuality,
+      isDemo: isDemo ?? this.isDemo,
       recordedAt: recordedAt ?? this.recordedAt,
       rowid: rowid ?? this.rowid,
     );
@@ -2764,6 +2871,9 @@ class HourlyHistoryCompanion extends UpdateCompanion<HourlyHistoryRow> {
     if (dataQuality.present) {
       map['data_quality'] = Variable<String>(dataQuality.value);
     }
+    if (isDemo.present) {
+      map['is_demo'] = Variable<bool>(isDemo.value);
+    }
     if (recordedAt.present) {
       map['recorded_at'] = Variable<DateTime>(recordedAt.value);
     }
@@ -2797,6 +2907,7 @@ class HourlyHistoryCompanion extends UpdateCompanion<HourlyHistoryRow> {
           ..write('estimatedIntervals: $estimatedIntervals, ')
           ..write('coveragePct: $coveragePct, ')
           ..write('dataQuality: $dataQuality, ')
+          ..write('isDemo: $isDemo, ')
           ..write('recordedAt: $recordedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -3051,6 +3162,19 @@ class $HourlyQueueTable extends HourlyQueue
     requiredDuringInsert: false,
     defaultValue: const Constant('partial'),
   );
+  static const VerificationMeta _isDemoMeta = const VerificationMeta('isDemo');
+  @override
+  late final GeneratedColumn<bool> isDemo = GeneratedColumn<bool>(
+    'is_demo',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_demo" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _syncStateMeta = const VerificationMeta(
     'syncState',
   );
@@ -3143,6 +3267,7 @@ class $HourlyQueueTable extends HourlyQueue
     estimatedIntervals,
     coveragePct,
     dataQuality,
+    isDemo,
     syncState,
     attempts,
     lastError,
@@ -3322,6 +3447,12 @@ class $HourlyQueueTable extends HourlyQueue
         ),
       );
     }
+    if (data.containsKey('is_demo')) {
+      context.handle(
+        _isDemoMeta,
+        isDemo.isAcceptableOrUnknown(data['is_demo']!, _isDemoMeta),
+      );
+    }
     if (data.containsKey('sync_state')) {
       context.handle(
         _syncStateMeta,
@@ -3456,6 +3587,10 @@ class $HourlyQueueTable extends HourlyQueue
         DriftSqlType.string,
         data['${effectivePrefix}data_quality'],
       )!,
+      isDemo: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_demo'],
+      )!,
       syncState: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}sync_state'],
@@ -3511,6 +3646,15 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
   final int estimatedIntervals;
   final double coveragePct;
   final String dataQuality;
+
+  /// Dipertahankan dari [MinuteAggregates.isDemo] saat jam ditutup.
+  ///
+  /// Kolom ini yang dipakai [EnergySyncService] untuk menyaring baris
+  /// simulasi sebelum unggah, sehingga data karangan tidak pernah mendarat di
+  /// cloud seolah-olah hasil pengukuran. Baris yang tersaring tetap menunggu
+  /// di antrean, bukan dihapus, jadi menyalakan penyertaan demo tidak
+  /// menghilangkan apa pun yang sudah terekam.
+  final bool isDemo;
   final String syncState;
   final int attempts;
   final String? lastError;
@@ -3542,6 +3686,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     required this.estimatedIntervals,
     required this.coveragePct,
     required this.dataQuality,
+    required this.isDemo,
     required this.syncState,
     required this.attempts,
     this.lastError,
@@ -3589,6 +3734,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     map['estimated_intervals'] = Variable<int>(estimatedIntervals);
     map['coverage_pct'] = Variable<double>(coveragePct);
     map['data_quality'] = Variable<String>(dataQuality);
+    map['is_demo'] = Variable<bool>(isDemo);
     map['sync_state'] = Variable<String>(syncState);
     map['attempts'] = Variable<int>(attempts);
     if (!nullToAbsent || lastError != null) {
@@ -3643,6 +3789,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
       estimatedIntervals: Value(estimatedIntervals),
       coveragePct: Value(coveragePct),
       dataQuality: Value(dataQuality),
+      isDemo: Value(isDemo),
       syncState: Value(syncState),
       attempts: Value(attempts),
       lastError: lastError == null && nullToAbsent
@@ -3685,6 +3832,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
       estimatedIntervals: serializer.fromJson<int>(json['estimatedIntervals']),
       coveragePct: serializer.fromJson<double>(json['coveragePct']),
       dataQuality: serializer.fromJson<String>(json['dataQuality']),
+      isDemo: serializer.fromJson<bool>(json['isDemo']),
       syncState: serializer.fromJson<String>(json['syncState']),
       attempts: serializer.fromJson<int>(json['attempts']),
       lastError: serializer.fromJson<String?>(json['lastError']),
@@ -3718,6 +3866,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
       'estimatedIntervals': serializer.toJson<int>(estimatedIntervals),
       'coveragePct': serializer.toJson<double>(coveragePct),
       'dataQuality': serializer.toJson<String>(dataQuality),
+      'isDemo': serializer.toJson<bool>(isDemo),
       'syncState': serializer.toJson<String>(syncState),
       'attempts': serializer.toJson<int>(attempts),
       'lastError': serializer.toJson<String?>(lastError),
@@ -3749,6 +3898,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     int? estimatedIntervals,
     double? coveragePct,
     String? dataQuality,
+    bool? isDemo,
     String? syncState,
     int? attempts,
     Value<String?> lastError = const Value.absent(),
@@ -3779,6 +3929,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     estimatedIntervals: estimatedIntervals ?? this.estimatedIntervals,
     coveragePct: coveragePct ?? this.coveragePct,
     dataQuality: dataQuality ?? this.dataQuality,
+    isDemo: isDemo ?? this.isDemo,
     syncState: syncState ?? this.syncState,
     attempts: attempts ?? this.attempts,
     lastError: lastError.present ? lastError.value : this.lastError,
@@ -3841,6 +3992,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
       dataQuality: data.dataQuality.present
           ? data.dataQuality.value
           : this.dataQuality,
+      isDemo: data.isDemo.present ? data.isDemo.value : this.isDemo,
       syncState: data.syncState.present ? data.syncState.value : this.syncState,
       attempts: data.attempts.present ? data.attempts.value : this.attempts,
       lastError: data.lastError.present ? data.lastError.value : this.lastError,
@@ -3876,6 +4028,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
           ..write('estimatedIntervals: $estimatedIntervals, ')
           ..write('coveragePct: $coveragePct, ')
           ..write('dataQuality: $dataQuality, ')
+          ..write('isDemo: $isDemo, ')
           ..write('syncState: $syncState, ')
           ..write('attempts: $attempts, ')
           ..write('lastError: $lastError, ')
@@ -3909,6 +4062,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
     estimatedIntervals,
     coveragePct,
     dataQuality,
+    isDemo,
     syncState,
     attempts,
     lastError,
@@ -3941,6 +4095,7 @@ class HourlyQueueRow extends DataClass implements Insertable<HourlyQueueRow> {
           other.estimatedIntervals == this.estimatedIntervals &&
           other.coveragePct == this.coveragePct &&
           other.dataQuality == this.dataQuality &&
+          other.isDemo == this.isDemo &&
           other.syncState == this.syncState &&
           other.attempts == this.attempts &&
           other.lastError == this.lastError &&
@@ -3971,6 +4126,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
   final Value<int> estimatedIntervals;
   final Value<double> coveragePct;
   final Value<String> dataQuality;
+  final Value<bool> isDemo;
   final Value<String> syncState;
   final Value<int> attempts;
   final Value<String?> lastError;
@@ -4000,6 +4156,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     this.estimatedIntervals = const Value.absent(),
     this.coveragePct = const Value.absent(),
     this.dataQuality = const Value.absent(),
+    this.isDemo = const Value.absent(),
     this.syncState = const Value.absent(),
     this.attempts = const Value.absent(),
     this.lastError = const Value.absent(),
@@ -4030,6 +4187,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     this.estimatedIntervals = const Value.absent(),
     this.coveragePct = const Value.absent(),
     this.dataQuality = const Value.absent(),
+    this.isDemo = const Value.absent(),
     this.syncState = const Value.absent(),
     this.attempts = const Value.absent(),
     this.lastError = const Value.absent(),
@@ -4062,6 +4220,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     Expression<int>? estimatedIntervals,
     Expression<double>? coveragePct,
     Expression<String>? dataQuality,
+    Expression<bool>? isDemo,
     Expression<String>? syncState,
     Expression<int>? attempts,
     Expression<String>? lastError,
@@ -4092,6 +4251,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
       if (estimatedIntervals != null) 'estimated_intervals': estimatedIntervals,
       if (coveragePct != null) 'coverage_pct': coveragePct,
       if (dataQuality != null) 'data_quality': dataQuality,
+      if (isDemo != null) 'is_demo': isDemo,
       if (syncState != null) 'sync_state': syncState,
       if (attempts != null) 'attempts': attempts,
       if (lastError != null) 'last_error': lastError,
@@ -4124,6 +4284,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     Value<int>? estimatedIntervals,
     Value<double>? coveragePct,
     Value<String>? dataQuality,
+    Value<bool>? isDemo,
     Value<String>? syncState,
     Value<int>? attempts,
     Value<String?>? lastError,
@@ -4154,6 +4315,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
       estimatedIntervals: estimatedIntervals ?? this.estimatedIntervals,
       coveragePct: coveragePct ?? this.coveragePct,
       dataQuality: dataQuality ?? this.dataQuality,
+      isDemo: isDemo ?? this.isDemo,
       syncState: syncState ?? this.syncState,
       attempts: attempts ?? this.attempts,
       lastError: lastError ?? this.lastError,
@@ -4230,6 +4392,9 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
     if (dataQuality.present) {
       map['data_quality'] = Variable<String>(dataQuality.value);
     }
+    if (isDemo.present) {
+      map['is_demo'] = Variable<bool>(isDemo.value);
+    }
     if (syncState.present) {
       map['sync_state'] = Variable<String>(syncState.value);
     }
@@ -4278,6 +4443,7 @@ class HourlyQueueCompanion extends UpdateCompanion<HourlyQueueRow> {
           ..write('estimatedIntervals: $estimatedIntervals, ')
           ..write('coveragePct: $coveragePct, ')
           ..write('dataQuality: $dataQuality, ')
+          ..write('isDemo: $isDemo, ')
           ..write('syncState: $syncState, ')
           ..write('attempts: $attempts, ')
           ..write('lastError: $lastError, ')
@@ -4597,6 +4763,7 @@ typedef $$MinuteAggregatesTableCreateCompanionBuilder =
       Value<int> sampleCount,
       Value<double> observedSeconds,
       Value<int> estimatedIntervals,
+      Value<bool> isDemo,
       Value<int> rowid,
     });
 typedef $$MinuteAggregatesTableUpdateCompanionBuilder =
@@ -4620,6 +4787,7 @@ typedef $$MinuteAggregatesTableUpdateCompanionBuilder =
       Value<int> sampleCount,
       Value<double> observedSeconds,
       Value<int> estimatedIntervals,
+      Value<bool> isDemo,
       Value<int> rowid,
     });
 
@@ -4724,6 +4892,11 @@ class $$MinuteAggregatesTableFilterComposer
 
   ColumnFilters<int> get estimatedIntervals => $composableBuilder(
     column: $table.estimatedIntervals,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isDemo => $composableBuilder(
+    column: $table.isDemo,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -4831,6 +5004,11 @@ class $$MinuteAggregatesTableOrderingComposer
     column: $table.estimatedIntervals,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<bool> get isDemo => $composableBuilder(
+    column: $table.isDemo,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MinuteAggregatesTableAnnotationComposer
@@ -4926,6 +5104,9 @@ class $$MinuteAggregatesTableAnnotationComposer
     column: $table.estimatedIntervals,
     builder: (column) => column,
   );
+
+  GeneratedColumn<bool> get isDemo =>
+      $composableBuilder(column: $table.isDemo, builder: (column) => column);
 }
 
 class $$MinuteAggregatesTableTableManager
@@ -4984,6 +5165,7 @@ class $$MinuteAggregatesTableTableManager
                 Value<int> sampleCount = const Value.absent(),
                 Value<double> observedSeconds = const Value.absent(),
                 Value<int> estimatedIntervals = const Value.absent(),
+                Value<bool> isDemo = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MinuteAggregatesCompanion(
                 deviceKey: deviceKey,
@@ -5005,6 +5187,7 @@ class $$MinuteAggregatesTableTableManager
                 sampleCount: sampleCount,
                 observedSeconds: observedSeconds,
                 estimatedIntervals: estimatedIntervals,
+                isDemo: isDemo,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -5028,6 +5211,7 @@ class $$MinuteAggregatesTableTableManager
                 Value<int> sampleCount = const Value.absent(),
                 Value<double> observedSeconds = const Value.absent(),
                 Value<int> estimatedIntervals = const Value.absent(),
+                Value<bool> isDemo = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MinuteAggregatesCompanion.insert(
                 deviceKey: deviceKey,
@@ -5049,6 +5233,7 @@ class $$MinuteAggregatesTableTableManager
                 sampleCount: sampleCount,
                 observedSeconds: observedSeconds,
                 estimatedIntervals: estimatedIntervals,
+                isDemo: isDemo,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -5114,6 +5299,7 @@ typedef $$HourlyHistoryTableCreateCompanionBuilder =
       Value<int> estimatedIntervals,
       Value<double> coveragePct,
       Value<String> dataQuality,
+      Value<bool> isDemo,
       required DateTime recordedAt,
       Value<int> rowid,
     });
@@ -5140,6 +5326,7 @@ typedef $$HourlyHistoryTableUpdateCompanionBuilder =
       Value<int> estimatedIntervals,
       Value<double> coveragePct,
       Value<String> dataQuality,
+      Value<bool> isDemo,
       Value<DateTime> recordedAt,
       Value<int> rowid,
     });
@@ -5255,6 +5442,11 @@ class $$HourlyHistoryTableFilterComposer
 
   ColumnFilters<String> get dataQuality => $composableBuilder(
     column: $table.dataQuality,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isDemo => $composableBuilder(
+    column: $table.isDemo,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5378,6 +5570,11 @@ class $$HourlyHistoryTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isDemo => $composableBuilder(
+    column: $table.isDemo,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get recordedAt => $composableBuilder(
     column: $table.recordedAt,
     builder: (column) => ColumnOrderings(column),
@@ -5486,6 +5683,9 @@ class $$HourlyHistoryTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<bool> get isDemo =>
+      $composableBuilder(column: $table.isDemo, builder: (column) => column);
+
   GeneratedColumn<DateTime> get recordedAt => $composableBuilder(
     column: $table.recordedAt,
     builder: (column) => column,
@@ -5550,6 +5750,7 @@ class $$HourlyHistoryTableTableManager
                 Value<int> estimatedIntervals = const Value.absent(),
                 Value<double> coveragePct = const Value.absent(),
                 Value<String> dataQuality = const Value.absent(),
+                Value<bool> isDemo = const Value.absent(),
                 Value<DateTime> recordedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => HourlyHistoryCompanion(
@@ -5574,6 +5775,7 @@ class $$HourlyHistoryTableTableManager
                 estimatedIntervals: estimatedIntervals,
                 coveragePct: coveragePct,
                 dataQuality: dataQuality,
+                isDemo: isDemo,
                 recordedAt: recordedAt,
                 rowid: rowid,
               ),
@@ -5600,6 +5802,7 @@ class $$HourlyHistoryTableTableManager
                 Value<int> estimatedIntervals = const Value.absent(),
                 Value<double> coveragePct = const Value.absent(),
                 Value<String> dataQuality = const Value.absent(),
+                Value<bool> isDemo = const Value.absent(),
                 required DateTime recordedAt,
                 Value<int> rowid = const Value.absent(),
               }) => HourlyHistoryCompanion.insert(
@@ -5624,6 +5827,7 @@ class $$HourlyHistoryTableTableManager
                 estimatedIntervals: estimatedIntervals,
                 coveragePct: coveragePct,
                 dataQuality: dataQuality,
+                isDemo: isDemo,
                 recordedAt: recordedAt,
                 rowid: rowid,
               ),
@@ -5684,6 +5888,7 @@ typedef $$HourlyQueueTableCreateCompanionBuilder =
       Value<int> estimatedIntervals,
       Value<double> coveragePct,
       Value<String> dataQuality,
+      Value<bool> isDemo,
       Value<String> syncState,
       Value<int> attempts,
       Value<String?> lastError,
@@ -5715,6 +5920,7 @@ typedef $$HourlyQueueTableUpdateCompanionBuilder =
       Value<int> estimatedIntervals,
       Value<double> coveragePct,
       Value<String> dataQuality,
+      Value<bool> isDemo,
       Value<String> syncState,
       Value<int> attempts,
       Value<String?> lastError,
@@ -5835,6 +6041,11 @@ class $$HourlyQueueTableFilterComposer
 
   ColumnFilters<String> get dataQuality => $composableBuilder(
     column: $table.dataQuality,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isDemo => $composableBuilder(
+    column: $table.isDemo,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5983,6 +6194,11 @@ class $$HourlyQueueTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isDemo => $composableBuilder(
+    column: $table.isDemo,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get syncState => $composableBuilder(
     column: $table.syncState,
     builder: (column) => ColumnOrderings(column),
@@ -6116,6 +6332,9 @@ class $$HourlyQueueTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<bool> get isDemo =>
+      $composableBuilder(column: $table.isDemo, builder: (column) => column);
+
   GeneratedColumn<String> get syncState =>
       $composableBuilder(column: $table.syncState, builder: (column) => column);
 
@@ -6189,6 +6408,7 @@ class $$HourlyQueueTableTableManager
                 Value<int> estimatedIntervals = const Value.absent(),
                 Value<double> coveragePct = const Value.absent(),
                 Value<String> dataQuality = const Value.absent(),
+                Value<bool> isDemo = const Value.absent(),
                 Value<String> syncState = const Value.absent(),
                 Value<int> attempts = const Value.absent(),
                 Value<String?> lastError = const Value.absent(),
@@ -6218,6 +6438,7 @@ class $$HourlyQueueTableTableManager
                 estimatedIntervals: estimatedIntervals,
                 coveragePct: coveragePct,
                 dataQuality: dataQuality,
+                isDemo: isDemo,
                 syncState: syncState,
                 attempts: attempts,
                 lastError: lastError,
@@ -6249,6 +6470,7 @@ class $$HourlyQueueTableTableManager
                 Value<int> estimatedIntervals = const Value.absent(),
                 Value<double> coveragePct = const Value.absent(),
                 Value<String> dataQuality = const Value.absent(),
+                Value<bool> isDemo = const Value.absent(),
                 Value<String> syncState = const Value.absent(),
                 Value<int> attempts = const Value.absent(),
                 Value<String?> lastError = const Value.absent(),
@@ -6278,6 +6500,7 @@ class $$HourlyQueueTableTableManager
                 estimatedIntervals: estimatedIntervals,
                 coveragePct: coveragePct,
                 dataQuality: dataQuality,
+                isDemo: isDemo,
                 syncState: syncState,
                 attempts: attempts,
                 lastError: lastError,

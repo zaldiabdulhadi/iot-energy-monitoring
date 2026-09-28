@@ -24,9 +24,17 @@ class EnergyRecorder {
   DateTime? _previousAt;
   String? _deviceKey;
 
-  Future<void> record(EnergyReading reading, {DateTime? now}) {
+  /// Asal-usul sampel yang terakhir diterima, dipakai mendeteksi perpindahan
+  /// antara mode demo dan ESP. Null berarti belum ada sampel sama sekali.
+  bool? _lastIsDemo;
+
+  Future<void> record(
+    EnergyReading reading, {
+    DateTime? now,
+    bool isDemo = false,
+  }) {
     final timestamp = now ?? DateTime.now();
-    return _serialize(() => _record(reading, timestamp));
+    return _serialize(() => _record(reading, timestamp, isDemo: isDemo));
   }
 
   Future<void> flush() => _serialize(_flush);
@@ -40,6 +48,7 @@ class EnergyRecorder {
     _buffer = null;
     _previous = null;
     _previousAt = null;
+    _lastIsDemo = null;
   }
 
   Future<T> _serialize<T>(Future<T> Function() action) {
@@ -50,13 +59,33 @@ class EnergyRecorder {
     return completer.future;
   }
 
-  Future<void> _record(EnergyReading reading, DateTime timestamp) async {
+  Future<void> _record(
+    EnergyReading reading,
+    DateTime timestamp, {
+    bool isDemo = false,
+  }) async {
     final deviceKey = await _device();
     final minuteStart = floorToMinute(timestamp);
 
     if (_buffer != null && _buffer!.minuteStart != minuteStart) {
       await _persistBuffer(deviceKey);
       await _closeCompletedHours(timestamp);
+    }
+
+    // Satu menit tidak bisa menyimpan dua asal-usul sekaligus: kunci utamanya
+    // hanya `(device_key, minute_start)`, jadi memecah buffer saat pergantian
+    // mode hanya akan membuat penulisan kedua menimpa yang pertama. Aturannya
+    // satu menit sekali tercemar simulasi menjadi simulasi, dan penandanya tidak
+    // pernah turun lagi. Ini juga alasan `upsertMinute` menjaga `is_demo`
+    // secara monoton.
+    //
+    // Yang tetap perlu dipotong adalah `_previous`: energi interval antara dua
+    // sampel berbeda asal-usul tidak bermakna, jadi sampel pertama setelah
+    // perpindahan hanya menyumbang tegangan, arus, dan daya.
+    if (_lastIsDemo != isDemo) {
+      _previous = null;
+      _previousAt = null;
+      _lastIsDemo = isDemo;
     }
 
     var intervalKwh = 0.0;
@@ -80,6 +109,7 @@ class EnergyRecorder {
     final buffer = existing != null && existing.minuteStart == minuteStart
         ? existing
         : (_buffer = _MinuteBuffer(minuteStart));
+    if (isDemo) buffer.isDemo = true;
     buffer.add(
       reading,
       intervalKwh: intervalKwh,
@@ -131,6 +161,7 @@ class EnergyRecorder {
     }
     await database.upsertMinute(buffer.toRow(deviceKey));
     _buffer = null;
+    _lastIsDemo = buffer.isDemo;
   }
 
   Future<String> _device() async {
@@ -142,6 +173,10 @@ class _MinuteBuffer {
   _MinuteBuffer(this.minuteStart);
 
   final DateTime minuteStart;
+
+  /// Dinaikkan, tidak pernah diturunkan: satu sampel simulasi sudah cukup
+  /// untuk membuat seluruh menit ini ditandai sebagai simulasi.
+  bool isDemo = false;
 
   double energyKwh = 0;
   double powerSum = 0;
@@ -209,6 +244,7 @@ class _MinuteBuffer {
         sampleCount: sampleCount,
         observedSeconds: observedSeconds,
         estimatedIntervals: estimatedIntervals,
+        isDemo: isDemo,
       );
 }
 

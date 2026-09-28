@@ -19,6 +19,24 @@ void main() {
       expect(json.keys, contains('frequency_max'));
       expect(json.keys, contains('power_factor_min'));
       expect(json.keys, contains('estimated_intervals'));
+      expect(json['is_demo'], isFalse);
+    });
+
+    test('is_demo ikut terenkode dan didekode', () {
+      final source = EnergyHourly(
+        deviceKey: base.deviceKey,
+        hourStart: DateTime(2026, 9, 25, 14),
+        isDemo: true,
+      );
+
+      expect(source.toJson()['is_demo'], isTrue);
+      expect(EnergyHourly.fromJson(source.toJson()).isDemo, isTrue);
+    });
+
+    test('baris lama tanpa is_demo dibaca sebagai pengukuran', () {
+      final json = base.toJson()..remove('is_demo');
+
+      expect(EnergyHourly.fromJson(json).isDemo, isFalse);
     });
 
     test('hour_start dikirim dalam UTC lalu dikembalikan sebagai waktu lokal', () {
@@ -51,6 +69,7 @@ void main() {
         estimatedIntervals: 3,
         coveragePct: 99.86,
         quality: EnergyDataQuality.estimated,
+        isDemo: true,
       );
 
       final decoded = EnergyHourly.fromJson(source.toJson());
@@ -71,6 +90,7 @@ void main() {
       expect(decoded.estimatedIntervals, source.estimatedIntervals);
       expect(decoded.coveragePct, source.coveragePct);
       expect(decoded.quality, EnergyDataQuality.estimated);
+      expect(decoded.isDemo, isTrue);
     });
 
     test('kolom min/max yang null tetap null setelah round trip', () {

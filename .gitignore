@@ -43,3 +43,19 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Kredensial build. `SUPABASE_SYNC_SECRET` ada di dalam binary aplikasi, jadi
+# masuk riwayat git berarti bocor permanen dan tidak bisa dicabut. Berkas
+# `.example` tetap di-commit sebagai template.
+/.env
+/.env.*
+!/.env.*.example
+
+# Policy RLS yang sudah diisi secret aslinya. Yang di-commit hanya templatnya,
+# jadi secret tidak pernah ikut ter-*commit*.
+/supabase/setup/*.sql
+!/supabase/setup/*.sql.example
+
+# Metadata lokal Supabase CLI.
+/supabase/.temp/
+

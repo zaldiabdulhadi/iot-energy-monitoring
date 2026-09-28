@@ -20,6 +20,7 @@ class SyncStatusProvider extends ChangeNotifier {
 
   Timer? _timer;
   int _pending = 0;
+  int _pendingDemo = 0;
   int _deferred = 0;
   DateTime? _lastSyncedAt;
   DateTime? _lastAttemptAt;
@@ -32,6 +33,9 @@ class SyncStatusProvider extends ChangeNotifier {
 
   /// Jumlah jam yang belum pernah berhasil diunggah.
   int get pending => _pending;
+
+  /// Jumlah jam simulasi yang tertahan di antrean dan tidak akan diunggah.
+  int get pendingDemo => _pendingDemo;
 
   /// Jumlah jam yang gagal dan masih dalam masa backoff.
   int get deferred => _deferred;
@@ -54,6 +58,9 @@ class SyncStatusProvider extends ChangeNotifier {
     if (_syncing) return 'Menyinkronkan…';
     if (_error != null) return 'Gagal sinkronisasi';
     if (_pending > 0) return 'Menunggu $_pending jam';
+    // Antrean yang isinya hanya jam simulasi. Ini bukan kondisi yang perlu
+    // diperbaiki, jadi pesannya dibedakan dari "menunggu sinkron".
+    if (_pendingDemo > 0) return 'Hanya data simulasi';
     if (_lastSyncedAt == null) return 'Belum pernah sinkron';
     return 'Tersinkron';
   }
@@ -63,6 +70,7 @@ class SyncStatusProvider extends ChangeNotifier {
     final deviceKey = await service.database.currentDeviceId();
     if (deviceKey == null) return;
     _pending = await service.database.countPending(deviceKey);
+    _pendingDemo = await service.database.countPendingDemo(deviceKey);
     _deferred = await service.database.countDeferred(deviceKey);
     notifyListeners();
   }

@@ -8,6 +8,7 @@ import 'providers/energy_data_provider.dart';
 import 'providers/energy_history_provider.dart';
 import 'providers/sync_status_provider.dart';
 import 'screens/home_shell.dart';
+import 'screens/onboarding_screen.dart';
 import 'services/energy_history_service.dart';
 import 'services/energy_recorder.dart';
 import 'services/energy_sync_service.dart';
@@ -18,12 +19,19 @@ class SmartEnergyApp extends StatelessWidget {
     super.key,
     required this.database,
     this.syncService,
+    this.showIntroOnLaunch = true,
   });
 
   final EnergyDatabase database;
 
   /// Null berarti sinkronisasi cloud dimatikan.
   final EnergySyncService? syncService;
+
+  /// Tampilkan logo lalu tiga halaman instruksi sebelum masuk ke aplikasi.
+  ///
+  /// Benar di aplikasi sungguhan, dan dimatikan di test karena test yang ada
+  /// dibangun dengan asumsi tab pertama langsung terlihat.
+  final bool showIntroOnLaunch;
 
   @override
   Widget build(BuildContext context) {
@@ -61,8 +69,52 @@ class SmartEnergyApp extends StatelessWidget {
         title: 'Smart Energy',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
-        home: const _LifecycleSyncListener(child: HomeShell()),
+        home: _LifecycleSyncListener(
+          child: _IntroGate(
+            showIntro: showIntroOnLaunch,
+            child: const HomeShell(),
+          ),
+        ),
       ),
+    );
+  }
+}
+
+/// Menampilkan layar instruksi singkat setiap kali aplikasi dibuka, lalu
+/// menggantinya dengan [child].
+///
+/// Perpindahan ke [HomeShell] memakai `AnimatedSwitcher` supaya tidak terasa
+/// terpotong. Penjaga siklus hidup aplikasi tetap berada di atas [_IntroGate],
+/// sehingga rekaman tetap tersimpan saat aplikasi ditutup di tengah transisi.
+class _IntroGate extends StatefulWidget {
+  const _IntroGate({required this.showIntro, required this.child});
+
+  final bool showIntro;
+  final Widget child;
+
+  @override
+  State<_IntroGate> createState() => _IntroGateState();
+}
+
+class _IntroGateState extends State<_IntroGate> {
+  bool _introVisible = true;
+
+  @override
+  Widget build(BuildContext context) {
+    // Lewati fade sepenuhnya saat onboarding dimatikan, supaya test dan
+    // penggunaan internal yang sengaja melewati layar ini tidak ikut
+    // menunggu animasi.
+    if (!widget.showIntro) return widget.child;
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 280),
+      switchInCurve: Curves.easeOut,
+      child: _introVisible
+          ? OnboardingScreen(
+              key: const ValueKey('onboarding'),
+              onFinished: () => setState(() => _introVisible = false),
+            )
+          : KeyedSubtree(key: const ValueKey('home'), child: widget.child),
     );
   }
 }

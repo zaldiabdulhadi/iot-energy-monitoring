@@ -19,7 +19,7 @@ class EnergyDatabase extends _$EnergyDatabase {
   EnergyDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -49,6 +49,14 @@ class EnergyDatabase extends _$EnergyDatabase {
               'observed_seconds, estimated_intervals, coverage_pct, '
               'data_quality, updated_at FROM hourly_queue',
             );
+          }
+          if (from < 4) {
+            // Penanda asal-usul data. Default false membuat `addColumn`
+            // menandai seluruh baris lama sebagai pengukuran, yang memang
+            // benar: data sebelum kolom ini hanya bisa berasal dari ESP.
+            await m.addColumn(minuteAggregates, minuteAggregates.isDemo);
+            await m.addColumn(hourlyQueue, hourlyQueue.isDemo);
+            await m.addColumn(hourlyHistory, hourlyHistory.isDemo);
           }
         },
         beforeOpen: (details) async {
@@ -99,7 +107,26 @@ class EnergyDatabase extends _$EnergyDatabase {
     );
   }
 
+  /// Menyimpan agregat satu menit, menimpa baris dengan kunci yang sama.
+  ///
+  /// `is_demo` bersifat monoton: kalau baris yang sudah ada ditandai demo,
+  /// penulisan berikutnya tidak boleh mengembalikannya jadi false. Ini penting
+  /// karena kunci utamanya hanya `(device_key, minute_start)`, jadi satu menit
+  /// yang sempat menerima sampel simulasi lalu menerima sampel ESP akan menimpa
+  /// baris yang sama. Tanpa aturan ini, rekaman karangan bisa tersimpan
+  /// seolah-olah pengukuran asli.
+  ///
+  /// Pembacaan-then-menulis aman karena semua penulisan menit melewati
+  /// [_EnergyRecorder] antrean tunggal](energy_recorder.dart).
   Future<void> upsertMinute(MinuteAggregateRow row) async {
+    final existing = await (select(minuteAggregates)
+          ..where(
+            (t) =>
+                t.deviceKey.equals(row.deviceKey) &
+                t.minuteStart.equals(toStorage(row.minuteStart)),
+          ))
+        .getSingleOrNull();
+
     await into(minuteAggregates).insertOnConflictUpdate(
       MinuteAggregatesCompanion(
         deviceKey: Value(row.deviceKey),
@@ -121,6 +148,7 @@ class EnergyDatabase extends _$EnergyDatabase {
         sampleCount: Value(row.sampleCount),
         observedSeconds: Value(row.observedSeconds),
         estimatedIntervals: Value(row.estimatedIntervals),
+        isDemo: Value((existing?.isDemo ?? false) || row.isDemo),
       ),
     );
   }
@@ -189,6 +217,7 @@ class EnergyDatabase extends _$EnergyDatabase {
         estimatedIntervals: Value(hourly.estimatedIntervals),
         coveragePct: Value(hourly.coveragePct),
         dataQuality: Value(hourly.quality.wireName),
+        isDemo: Value(hourly.isDemo),
         syncState: const Value('pending'),
         nextAttemptAt: const Value(null),
         updatedAt: Value(toStorage(now)),
@@ -239,6 +268,7 @@ class EnergyDatabase extends _$EnergyDatabase {
         estimatedIntervals: Value(hourly.estimatedIntervals),
         coveragePct: Value(hourly.coveragePct),
         dataQuality: Value(hourly.quality.wireName),
+        isDemo: Value(hourly.isDemo),
         recordedAt: Value(toStorage(now)),
       ),
     );
@@ -321,10 +351,16 @@ class EnergyDatabase extends _$EnergyDatabase {
   ///
   /// Baris `failed` ikut diambil selama [now] sudah melewati `next_attempt_at`,
   /// sehingga backoff setelah kegagalan benar-benar dihormati.
+  /// Bila [includeDemo] false, jam bertanda simulasi dilewati.
+  ///
+  /// Saringan ada di query, bukan setelah baris ditarik, supaya antrean yang
+  /// seluruhnya berisi data demo tidak membuat pemanggil mengambil batch
+  /// penuh yang lalu dibuang.
   Future<List<HourlyQueueRow>> pendingHours(
     String deviceKey, {
     int limit = 50,
     DateTime? now,
+    bool includeDemo = false,
   }) async {
     final cutoff = toStorage(now ?? DateTime.now());
     return (select(hourlyQueue)
@@ -333,17 +369,44 @@ class EnergyDatabase extends _$EnergyDatabase {
                 t.deviceKey.equals(deviceKey) &
                 t.syncState.isIn(const ['pending', 'failed']) &
                 (t.nextAttemptAt.isNull() |
-                    t.nextAttemptAt.isSmallerOrEqualValue(cutoff)),
+                    t.nextAttemptAt.isSmallerOrEqualValue(cutoff)) &
+                (includeDemo ? const Constant(true) : t.isDemo.equals(false)),
           )
           ..orderBy([(t) => OrderingTerm(expression: t.hourStart)])
           ..limit(limit))
         .get();
   }
 
+  /// Jumlah jam yang benar-benar akan dicoba diunggah.
+  ///
+  /// Jam simulasi sengaja tidak dihitung. They akan tetap menggantung di
+  /// antrean selamanya karena [EnergySyncService] menyaringnya, jadi menghitungnya
+  /// membuat label "Menunggu N jam" tidak pernah nol dan terlihat seperti
+  /// sinkronisasi yang macet padahal tidak ada. Untuk transparansi, jumlahnya
+  /// tersedia terpisah lewat [countPendingDemo].
   Future<int> countPending(String deviceKey) async {
     final row = await customSelect(
       'SELECT COUNT(*) AS c FROM hourly_queue '
-      'WHERE device_key = ? AND sync_state IN (?, ?)',
+      'WHERE device_key = ? AND sync_state IN (?, ?) AND NOT is_demo',
+      variables: [
+        Variable<String>(deviceKey),
+        const Variable<String>('pending'),
+        const Variable<String>('failed'),
+      ],
+      readsFrom: {hourlyQueue},
+    ).getSingle();
+    return row.read<int>('c');
+  }
+
+  /// Jam simulasi yang masih menggantung di antrean, dipisah dari
+  /// [countPending].
+  ///
+  /// Baris ini tidak akan pernah diunggah selama `includeDemo` false, jadi
+  /// jumlahnya dibaca terpisah supaya badge antrean tidak ikut menghitungnya.
+  Future<int> countPendingDemo(String deviceKey) async {
+    final row = await customSelect(
+      'SELECT COUNT(*) AS c FROM hourly_queue '
+      'WHERE device_key = ? AND sync_state IN (?, ?) AND is_demo',
       variables: [
         Variable<String>(deviceKey),
         const Variable<String>('pending'),
@@ -498,6 +561,7 @@ extension HourlyHistoryRowMapper on HourlyHistoryRow {
         estimatedIntervals: estimatedIntervals,
         coveragePct: coveragePct,
         quality: EnergyDataQuality.fromWire(dataQuality),
+        isDemo: isDemo,
       );
 }
 
@@ -524,6 +588,7 @@ extension HourlyQueueRowMapper on HourlyQueueRow {
         estimatedIntervals: estimatedIntervals,
         coveragePct: coveragePct,
         quality: EnergyDataQuality.fromWire(dataQuality),
+        isDemo: isDemo,
       );
 
   EnergySyncState get syncStateValue => EnergySyncState.fromWire(syncState);

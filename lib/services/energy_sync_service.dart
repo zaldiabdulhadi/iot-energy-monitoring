@@ -41,11 +41,20 @@ class EnergySyncService {
     this.remote,
     this.batchSize = 200,
     this.retention = const Duration(days: 30),
+    this.includeDemo = false,
   });
   final EnergyDatabase database;
   final EnergyRemoteDataSource? remote;
   final int batchSize;
   final Duration retention;
+
+  /// Bila true, jam bertanda demo ikut diunggah dengan `is_demo` menyala di
+  /// sisi server.
+  ///
+  /// Default false karena keaslian data pengukuran adalah hal yang tidak boleh
+  /// hilang hanya karena fitur ini aktif. Ini opt-in eksplisit, dan hanya
+  /// berguna saat alur sinkronisasi perlu diuji tanpa ESP terpasang.
+  final bool includeDemo;
 
   bool _running = false;
 
@@ -73,10 +82,14 @@ class EnergySyncService {
 
       // Beberapa batch bila antrean menumpuk, misalnya saat backfill pertama.
       while (true) {
+        // Jam demo tidak pernah dikembalikan saat [includeDemo] false, jadi
+        // baris yang lolos selalu bisa diproses dan markSynced menguranginya.
+        // Antrean demo yang tertahan tidak membuat loop ini berputar.
         final rows = await database.pendingHours(
           device.localId,
           limit: batchSize,
           now: now,
+          includeDemo: includeDemo,
         );
         if (rows.isEmpty) break;
 

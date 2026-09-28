@@ -38,6 +38,7 @@ class EnergyHourly {
     this.estimatedIntervals = 0,
     this.coveragePct = 0,
     this.quality = EnergyDataQuality.partial,
+    this.isDemo = false,
   });
 
   final String deviceKey;
@@ -61,6 +62,15 @@ class EnergyHourly {
   final int estimatedIntervals;
   final double coveragePct;
   final EnergyDataQuality quality;
+
+  /// Apakah jam ini mengandung data simulasi.
+  ///
+  /// Mengikuti aturan konservatif di `rollupMinutes`: satu menit simulasi saja
+  /// sudah membuat seluruh jam ditandai. Jadi `true` berarti "pasti ada
+  /// bagian karangan", bukan "sepenuhnya karangan". Nilai ini ikut dikirim ke
+  /// Postgres sebagai `is_demo` supaya data karangan yang sengaja diunggah
+  /// masih bisa dibedakan dari pengukuran sungguhan.
+  final bool isDemo;
 
   bool get isEmpty => sampleCount == 0;
 
@@ -112,6 +122,7 @@ class EnergyHourly {
         'estimated_intervals': estimatedIntervals,
         'coverage_pct': coveragePct,
         'data_quality': quality.wireName,
+        'is_demo': isDemo,
       };
 
   factory EnergyHourly.fromJson(Map<String, dynamic> json) => EnergyHourly(
@@ -136,6 +147,7 @@ class EnergyHourly {
         estimatedIntervals: _readInt(json['estimated_intervals']),
         coveragePct: _readDouble(json['coverage_pct']),
         quality: EnergyDataQuality.fromWire(json['data_quality'] as String?),
+        isDemo: json['is_demo'] == true,
       );
 
   /// Postgres mengembalikan `double precision` sebagai JSON number, dan nilainya

@@ -1,0 +1,90 @@
+-- Policy RLS untuk aplikasi IoT Smart Energy.
+--
+-- BERKAS INI ADALAH TEMPLAT. Salin ke `enable_rls_policies.sql` (tanpa
+-- `.example`), ganti nilai rahasia di bawah, lalu jalankan salinannya lewat
+-- SQL Editor. Salinan yang berisi rahasia di-gitignore, jadi tidak pernah masuk
+-- riwayat git.
+--
+-- Jalankan setelah `migrations/20260925000001_init.sql`, karena berkas ini
+-- butuh tabel dan RLS-nya sudah ada.
+--
+-- Mengganti rahasia: aman untuk dijalankan ulang. Setiap policy didrop dulu
+-- sebelum dibuat ulang, jadi berkas ini idempoten.
+
+-- Helper agar policy tidak mengulang cast langsung dan tidak bisa salah ketik
+-- nama header. Argumen kedua current_setting() wajib true supaya tidak error
+-- ketika header tidak ada sama sekali. Fungsi ini harus ada sebelum policy
+-- karena PostgreSQL memvalidasi ekspresi policy saat pembuatan.
+create or replace function public.read_sync_secret() returns text
+  language sql
+  stable
+  security invoker
+  set search_path = ''
+as $$
+  select coalesce(
+    nullif(
+      (nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-sync-secret'),
+      ''
+    ),
+    ''
+  );
+$$;
+
+-- Single-user tanpa Supabase Auth: role `anon` adalah role publik, jadi tanpa
+-- policy tambahan siapa pun yang memegang publishable key bisa membaca dan
+-- menulis seluruh tabel. Supaya tetap tanpa login tetapi tidak terbuka lebar,
+-- policy mewajibkan header `x-sync-secret`.
+--
+-- CATATAN KEAMANAN: ini bukan keamanan sungguhan. Nilainya ada di dalam binary
+-- aplikasi dan bisa dibongkar. Yang dilakukan fungsi ini adalah memindahkan
+-- hambatan dari "punya publishable key" menjadi "punya publishable key DAN
+-- binary aplikasi". Untuk mengisolasi data per pengguna, ganti dengan Supabase
+-- Auth dan policy berbasis auth.uid().
+
+drop policy if exists sync_secret_all on public.devices;
+create policy "sync_secret_all" on public.devices
+  for all to anon
+  using (public.read_sync_secret() = 'GANTI_DENGAN_SECRET_ANDA')
+  with check (public.read_sync_secret() = 'GANTI_DENGAN_SECRET_ANDA');
+
+drop policy if exists sync_secret_all on public.energy_hourly;
+create policy "sync_secret_all" on public.energy_hourly
+  for all to anon
+  using (public.read_sync_secret() = 'GANTI_DENGAN_SECRET_ANDA')
+  with check (public.read_sync_secret() = 'GANTI_DENGAN_SECRET_ANDA');
+
+-- Policy untuk `authenticated`.
+--
+-- Grant di migrasi sudah diberikan ke role ini, jadi tanpa policy di sini
+-- semua request sebagai `authenticated` akan kena 403 hanya karena tidak ada
+-- policy yang cocok. Bagian ini menutup celah itu.
+--
+-- PENTING: ini tetap pemeriksaan secret di level tabel, BUKAN isolasi per
+-- pengguna. Siapa pun yang punya secret yang sama mendapat akses yang sama,
+-- apa pun identitas akunnya. Isolasi sebenarnya hanya bisa lewat auth.uid(),
+-- yang berarti policy RLS berbasis auth.uid(), bukan header kustom.
+
+drop policy if exists sync_secret_all_authenticated on public.devices;
+create policy "sync_secret_all_authenticated" on public.devices
+  for all to authenticated
+  using (public.read_sync_secret() = 'GANTI_DENGAN_SECRET_ANDA')
+  with check (public.read_sync_secret() = 'GANTI_DENGAN_SECRET_ANDA');
+
+drop policy if exists sync_secret_all_authenticated on public.energy_hourly;
+create policy "sync_secret_all_authenticated" on public.energy_hourly
+  for all to authenticated
+  using (public.read_sync_secret() = 'GANTI_DENGAN_SECRET_ANDA')
+  with check (public.read_sync_secret() = 'GANTI_DENGAN_SECRET_ANDA');
+
+grant execute on function public.read_sync_secret() to anon, authenticated;
+
+-- Verifikasi: policy harus muncul di katalog. Kalau hasil kosong, RLS belum
+-- aktif atau policy belum terpasang.
+select
+  tablename,
+  policyname,
+  roles,
+  cmd
+from pg_policies
+where schemaname = 'public'
+order by tablename, policyname;

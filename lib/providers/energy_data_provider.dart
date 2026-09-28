@@ -136,13 +136,21 @@ class EnergyDataProvider extends ChangeNotifier {
     }
   }
 
+  /// Meneruskan sampel simulasi ke [recorder] dengan `isDemo: true`.
+  ///
+  /// Demo sengaja tetap direkam, bukan hanya menggerakkan metrik live, supaya
+  /// riwayat dan analisis punya isi tanpa ESP terpasang. Yang mencegah angka
+  /// karangan dibaca sebagai pengukuran adalah kolom penanda `is_demo` di
+  /// skema lokal: `EnergySyncService` menyaringnya sebelum unggah, dan
+  /// `EnergyHourly.isDemo` menandainya di UI. Sumber terukur masuk lewat
+  /// [_applyReading] yang selalu memakai `isDemo: false`.
   void _tickDemo() {
     final now = DateTime.now();
     final reading = _demo.sample(now);
     _reading = reading;
     _lastUpdated = now;
     _trackPower();
-    recorder?.record(reading, now: now);
+    unawaited(recorder?.record(reading, now: now, isDemo: true));
   }
 
   Future<void> connect({Uri? endpoint}) async {
@@ -227,7 +235,7 @@ class EnergyDataProvider extends ChangeNotifier {
     _reading = reading;
     _lastUpdated = DateTime.now();
     _trackPower();
-    recorder?.record(reading, now: _lastUpdated);
+    unawaited(recorder?.record(reading, now: _lastUpdated, isDemo: false));
   }
 
   Future<void> persistPendingHistory() async {

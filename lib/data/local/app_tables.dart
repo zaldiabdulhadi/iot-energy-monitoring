@@ -36,6 +36,17 @@ class MinuteAggregates extends Table {
   RealColumn get observedSeconds => real().withDefault(const Constant(0))();
   IntColumn get estimatedIntervals => integer().withDefault(const Constant(0))();
 
+  /// Menandai menit ini sebagai hasil simulasi, bukan pengukuran ESP.
+  ///
+  /// Satu-satunya sumber nilai true adalah mode demo, jadi kolom ini adalah
+  /// catatan asal-usul yang dibawa dari menit ke jam di
+  /// [rollupMinutes](hourly_rollup.dart). Tanpa penanda ini, angka karangan
+  /// akan tersimpan dengan bentuk yang persis sama seperti pengukuran.
+  ///
+  /// Default false supaya rekaman jalur ESP, termasuk data yang sudah tersimpan
+  /// sebelum kolom ini ada, tidak ikut ditandai secara tidak sengaja.
+  BoolColumn get isDemo => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {deviceKey, minuteStart};
 }
@@ -77,6 +88,15 @@ class HourlyHistory extends Table {
   RealColumn get coveragePct => real().withDefault(const Constant(0))();
   TextColumn get dataQuality =>
       text().withDefault(const Constant('partial'))();
+
+  /// Dipertahankan dari [MinuteAggregates.isDemo] saat jam ditutup.
+  ///
+  /// Analytics memakai penanda ini untuk menandai angka yang bukan pengukuran.
+  /// Sekali jam ditandai, nilainya tidak bisa kembali menjadi false: baris
+  /// ditulis ulang dengan `insertOnConflictUpdate`, jadi jam yang tadinya
+  /// sudah murni dan lalu tercemar simulasi akan ikut tercemar.
+  BoolColumn get isDemo => boolean().withDefault(const Constant(false))();
+
   DateTimeColumn get recordedAt => dateTime()();
 
   @override
@@ -111,6 +131,16 @@ class HourlyQueue extends Table {
   IntColumn get estimatedIntervals => integer().withDefault(const Constant(0))();
   RealColumn get coveragePct => real().withDefault(const Constant(0))();
   TextColumn get dataQuality => text().withDefault(const Constant('partial'))();
+
+  /// Dipertahankan dari [MinuteAggregates.isDemo] saat jam ditutup.
+  ///
+  /// Kolom ini yang dipakai [EnergySyncService] untuk menyaring baris
+  /// simulasi sebelum unggah, sehingga data karangan tidak pernah mendarat di
+  /// cloud seolah-olah hasil pengukuran. Baris yang tersaring tetap menunggu
+  /// di antrean, bukan dihapus, jadi menyalakan penyertaan demo tidak
+  /// menghilangkan apa pun yang sudah terekam.
+  BoolColumn get isDemo => boolean().withDefault(const Constant(false))();
+
   TextColumn get syncState => text().withDefault(const Constant('pending'))();
   IntColumn get attempts => integer().withDefault(const Constant(0))();
   TextColumn get lastError => text().nullable()();

@@ -47,6 +47,7 @@ MinuteAggregateRow minuteRow({
   int sampleCount = 0,
   double observedSeconds = 0,
   int estimatedIntervals = 0,
+  bool isDemo = false,
 }) =>
     MinuteAggregateRow(
       deviceKey: deviceKey,
@@ -68,6 +69,7 @@ MinuteAggregateRow minuteRow({
       sampleCount: sampleCount,
       observedSeconds: observedSeconds,
       estimatedIntervals: estimatedIntervals,
+      isDemo: isDemo,
     );
 
 void main() {
@@ -277,6 +279,54 @@ void main() {
 
       expect(hourly.co2At(0.42), closeTo(0.84, 1e-9));
       expect(hourly.averageWattsFromEnergy, closeTo(2000, 1e-9));
+    });
+
+    test('jam tanpa menit simulasi tidak ditandai demo', () {
+      final hourly = rollupMinutes(
+        deviceKey: 'dev',
+        hourStart: DateTime(2026, 9, 25, 10),
+        rows: [
+          minuteRow(
+            deviceKey: 'dev',
+            minuteStart: DateTime(2026, 9, 25, 10),
+            energyKwh: 1,
+            sampleCount: 60,
+            observedSeconds: 60,
+          ),
+        ],
+      );
+
+      expect(hourly.isDemo, isFalse);
+    });
+
+    test('satu menit simulasi sudah menandai seluruh jam', () {
+      // Aturan konservatif: yang penting jam ini tidak bisa lolos sebagai
+      // pengukuran murni, dan bagian mana yang karangan tidak diketahui dari
+      // level jam ini. Menandai jam sebagai demo adalah pilihan yang tidak
+      // membocorkan data palsu ke server.
+      final hourly = rollupMinutes(
+        deviceKey: 'dev',
+        hourStart: DateTime(2026, 9, 25, 10),
+        rows: [
+          minuteRow(
+            deviceKey: 'dev',
+            minuteStart: DateTime(2026, 9, 25, 10),
+            energyKwh: 1,
+            sampleCount: 60,
+            observedSeconds: 60,
+          ),
+          minuteRow(
+            deviceKey: 'dev',
+            minuteStart: DateTime(2026, 9, 25, 10, 1),
+            energyKwh: 0.2,
+            sampleCount: 60,
+            observedSeconds: 60,
+            isDemo: true,
+          ),
+        ],
+      );
+
+      expect(hourly.isDemo, isTrue);
     });
   });
 
