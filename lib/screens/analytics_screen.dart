@@ -357,25 +357,28 @@ const double _axisLabelGap = 6;
 
 /// Berapa banyak bucket yang dilewati antar label sumbu bawah.
 ///
-/// Dipakai oleh kedua grafik supaya label tidak pernah saling menimpa: nilai
-/// ini dihitung dari lebar label yang benar-benar dirender dan dari lebar satu
-/// slot bucket, jadi ikut menyesuaikan perangkat, ukuran huruf, dan lebar layar.
+/// Menghitungnya dari geometri yang benar-benar dirender fl_chart, bukan dari
+/// lebar kartu. `constraints.maxWidth` itu lebih besar daripada area plot:
+/// sumbu bawah memakai `reservedSize` dan tiap batang `spaceAround` menambah
+/// ruang di sekitarnya. Kalau slot per bucket diperkirakan dari lebar kartu,
+/// hasilnya terlalu lega dan label tetap saling menindih di layar sempit.
 ///
-/// `SideTitles.interval` saja tidak cukup. fl_chart mengabaikan interval itu
-/// untuk `BarChart` dan tetap memanggil `getTitlesWidget` untuk setiap batang,
-/// sehingga penyaringan tetap harus dilakukan di [_axisTitle] memakai nilai dari
-/// fungsi ini.
+/// Yang dipakai adalah [TitleMeta.parentAxisSize], yaitu lebar area plot
+/// setelah dikurangi ruang yang dipesan sumbu dan tepi. `min` dan `max` milik
+/// fl_chart tidak bisa dipercaya di sini: untuk `BarChart` keduanya selalu
+/// 0 dan 1 apa pun jumlah batangnya, karena posisi batang dihitung dari lebar
+/// batang, bukan dari skala data. Jumlah bucket yang diketahui aplikasi jauh
+/// lebih andal, dan membagi dua angka itu menghasilkan jarak piksel satu bucket
+/// untuk kedua jenis grafik.
 int _axisLabelStep({
   required int count,
-  required double availableWidth,
+  required double plotWidth,
   required double labelWidth,
 }) {
-  if (count <= 1) return 1;
-  final needed = labelWidth + _axisLabelGap;
-  // Satu slot label selalu bisa dipakai, walau labelnya lebih lebar dari
-  // porsinya, jadi hasil minimalnya bukan nol.
-  final fits = (availableWidth / needed).floor().clamp(1, count);
-  return (count / fits).ceil();
+  if (count <= 1 || plotWidth <= 0) return 1;
+  final perBucket = plotWidth / count;
+  final step = ((labelWidth + _axisLabelGap) / perBucket).ceil();
+  return step.clamp(1, count);
 }
 
 /// Lebar label sumbu terlebar, diukur dari teks yang akan dirender.
@@ -409,14 +412,27 @@ double _widestAxisLabelWidth(
 /// `BarChart` mengabaikan `SideTitles.interval` dan memanggil fungsi ini untuk
 /// setiap batang. Tanpa penyaringan di tempat ini, 24 label "13.00" digambar
 /// di atas 24 batang selebar belasan piksel dan saling menimpa.
+///
+/// Langkah penyaringan dihitung ulang di sini dari [TitleMeta] supaya
+/// berdasarkan jarak piksel antar dua label yang benar-benar ada, bukan
+/// perkiraan lebar kartu.
 Widget _axisTitle({
   required int index,
-  required int step,
+  required int count,
   required List<String> labels,
+  required double labelWidth,
   required TitleMeta meta,
   required TextStyle style,
 }) {
-  if (index < 0 || index >= labels.length || index % step != 0) {
+  if (index < 0 || index >= labels.length) {
+    return const SizedBox.shrink();
+  }
+  final step = _axisLabelStep(
+    count: count,
+    plotWidth: meta.parentAxisSize,
+    labelWidth: labelWidth,
+  );
+  if (index % step != 0) {
     return const SizedBox.shrink();
   }
   return SideTitleWidget(
@@ -681,6 +697,7 @@ class _ConsumptionChart extends StatelessWidget {
     final axisLabels = [
       for (final bucket in buckets) _axisLabel(bucket, summary.isDemo),
     ];
+    final widestLabel = _widestAxisLabelWidth(context, axisLabels, labelStyle);
 
     return AppCard(
       child: Column(
@@ -691,23 +708,9 @@ class _ConsumptionChart extends StatelessWidget {
             action: 'puncak ${formatValue(toEnergy(peak.kwh), decimals)} $unit',
           ),
           const SizedBox(height: 14),
-          // Lebar kartu baru diketahui setelah kartu ini dibangun, sedangkan
-          // jumlah label yang muat bergantung pada lebar itu.
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final step = _axisLabelStep(
-                count: buckets.length,
-                availableWidth: constraints.maxWidth,
-                labelWidth: _widestAxisLabelWidth(
-                  context,
-                  axisLabels,
-                  labelStyle,
-                ),
-              );
-
-              return SizedBox(
-                height: 190,
-                child: BarChart(
+          SizedBox(
+            height: 190,
+            child: BarChart(
                   BarChartData(
                     alignment: BarChartAlignment.spaceAround,
                     maxY: maxY,
@@ -755,11 +758,17 @@ class _ConsumptionChart extends StatelessWidget {
                         sideTitles: SideTitles(
                           showTitles: true,
                           reservedSize: 26,
-                          interval: step.toDouble(),
+                          // Sengaja 1: penyaringan label harus memakai
+                          // geometri plot yang baru diketahui saat render, dan
+                          // itu diurus [_axisTitle]. Jumlah bucket kecil, jadi
+                          // membangun widget untuk tiap batang lalu membuangnya
+                          // bukan biaya yang berarti.
+                          interval: 1,
                           getTitlesWidget: (value, meta) => _axisTitle(
                             index: value.toInt(),
-                            step: step,
+                            count: buckets.length,
                             labels: axisLabels,
+                            labelWidth: widestLabel,
                             meta: meta,
                             style: labelStyle,
                           ),
@@ -785,8 +794,6 @@ class _ConsumptionChart extends StatelessWidget {
                     ),
                   ),
                 ),
-              );
-            },
           ),
         ],
       ),
@@ -838,6 +845,7 @@ class _MetricHistoryChart extends StatelessWidget {
     final axisLabels = [
       for (final bucket in filled) _axisLabel(bucket, summary.isDemo),
     ];
+    final widestLabel = _widestAxisLabelWidth(context, axisLabels, labelStyle);
 
     return AppCard(
       child: Column(
@@ -853,21 +861,9 @@ class _MetricHistoryChart extends StatelessWidget {
             onChanged: onMetricChanged,
           ),
           const SizedBox(height: 14),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final step = _axisLabelStep(
-                count: filled.length,
-                availableWidth: constraints.maxWidth - _leftAxisReserved,
-                labelWidth: _widestAxisLabelWidth(
-                  context,
-                  axisLabels,
-                  labelStyle,
-                ),
-              );
-
-              return SizedBox(
-                height: 170,
-                child: LineChart(
+          SizedBox(
+            height: 170,
+            child: LineChart(
                   LineChartData(
                     minX: 0,
                     maxX: (filled.length - 1).toDouble(),
@@ -899,11 +895,14 @@ class _MetricHistoryChart extends StatelessWidget {
                         sideTitles: SideTitles(
                           showTitles: true,
                           reservedSize: 26,
-                          interval: step.toDouble(),
+                          // Sama seperti grafik batang: penyaringan label
+                          // ditentukan [_axisTitle] dari geometri saat render.
+                          interval: 1,
                           getTitlesWidget: (value, meta) => _axisTitle(
                             index: value.toInt(),
-                            step: step,
+                            count: filled.length,
                             labels: axisLabels,
+                            labelWidth: widestLabel,
                             meta: meta,
                             style: labelStyle,
                           ),
@@ -968,8 +967,6 @@ class _MetricHistoryChart extends StatelessWidget {
                     ],
                   ),
                 ),
-              );
-            },
           ),
           const SizedBox(height: 8),
           Row(

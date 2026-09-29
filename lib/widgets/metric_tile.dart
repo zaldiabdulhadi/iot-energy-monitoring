@@ -118,6 +118,11 @@ class MetricGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final columns = metricColumnsFor(constraints.maxWidth);
+        // Teks yang diperbesar butuh kartu lebih tinggi; kalau rasio tetap
+        // statis, label dan nilai meluber keluar kartu (lihat AdaptiveNumber
+        // yang tidak bisa menyusut karena kolom memberi tinggi tak terbatas).
+        // Rasio dibagi skala teks, dan dibatasi supaya tidak ekstrem.
+        final textScale = MediaQuery.textScalerOf(context).scale(1.0);
         return GridView.count(
           crossAxisCount: columns,
           shrinkWrap: true,
@@ -126,7 +131,8 @@ class MetricGrid extends StatelessWidget {
           crossAxisSpacing: spacing,
           // Rasio hanya stabil di tiga kolom; dua kolom butuh ruang vertikal
           // lebih supaya satuan dan catatan tidak terpotong.
-          childAspectRatio: columns == 3 ? 1.18 : 1.32,
+          childAspectRatio: (columns == 3 ? 1.18 : 1.32) /
+              textScale.clamp(1.0, 2.4),
           children: tiles,
         );
       },
