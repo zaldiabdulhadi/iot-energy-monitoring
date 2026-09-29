@@ -98,10 +98,10 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
       return;
     }
 
-    final endpoint = Uri.tryParse(_endpointController.text.trim());
-    if (endpoint == null ||
-        (endpoint.scheme != 'http' && endpoint.scheme != 'https') ||
-        endpoint.host.isEmpty) {
+    final endpoint = EnergyDataProvider.parseEndpoint(
+      _endpointController.text.trim(),
+    );
+    if (endpoint == null) {
       _showError('Masukkan URL API ESP yang valid.');
       return;
     }
@@ -359,7 +359,7 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
                 keyboardType: TextInputType.url,
                 autocorrect: false,
                 decoration: const InputDecoration(
-                  hintText: 'http://192.168.4.1/api/air-quality',
+                  hintText: 'http://192.168.1.19:5000/api/data?api_key=...',
                 ),
               ),
               const SizedBox(height: 16),
@@ -456,7 +456,7 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'API mengembalikan objek JSON numerik dengan field berikut:',
+                'API mengembalikan JSON numerik dengan field berikut. Boleh objek tunggal atau daftar bacaan; kalau daftar, yang paling baru dipakai.',
                 style: TextStyle(
                   fontSize: 11.5,
                   height: 1.5,

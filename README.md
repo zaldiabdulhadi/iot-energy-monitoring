@@ -32,6 +32,11 @@ salinannya sudah ada di server, sedangkan `hourly_history` tidak pernah dihapus
 dan menjadi sumber angka untuk layar Analisis. Karena itu `pruneSynced` tidak
 menyentuh tabel riwayat.
 
+`hourly_history` juga dibaca oleh `EnergyCsvExporter` saat pengguna mengunduh
+data, dan dihapus oleh `EnergyDataProvider.clearHistory()` saat pengguna memilih
+"Hapus riwayat". Keduanya memakai `device_key` aktif, jadi satu perangkat tidak
+pernah ikut terhapus atau ikut terunduh bersama yang lain.
+
 Aplikasi bersifat **offline-first**: SQLite lokal (Drift) adalah sumber kebenaran
 saat perangkat tidak terhubung, dan Supabase hanya menerima salinan agregat per
 jam. Menutup aplikasi tidak kehilangan data pengukuran.
@@ -63,7 +68,7 @@ sehingga watt per perangkat hanya bisa berupa karangan.
   terakhir, kualitas daya, rekomendasi, dan grafik daya lima menit terakhir.
 - **Analisis** — riwayat nyata per jam untuk jendela 24 jam, 7 hari, 30 hari,
   dan 12 bulan terakhir; grafik konsumsi, grafik tiap parameter, tabel
-  rentang, dan rekomendasi yang dihitung dari angka itu.
+  rentang, rekomendasi yang dihitung dari angka itu, dan tombol unduh CSV.
 - **Profil** — sumber data yang sedang aktif, ringkasan konsumsi, status
   sinkronisasi, dan konfigurasi API ESP.
 
@@ -127,6 +132,120 @@ recorder.record(reading, isDemo: false);
 fallback untuk rentang yang benar-benar kosong, dan baris tiruannya juga
 ditandai `isDemo` supaya UI menampilkan sufiks `*`, label sumbu amber, serta
 catatan bahwa angkanya bukan pengukuran.
+
+### Mengambil data dari ESP
+
+Pembacaan live terjadi setiap lima detik. `EnergyDataProvider.autoConnect()` dipanggil
+sekali saat aplikasi dibuka: endpoint yang tersimpan di `local_devices` langsung
+dicoba, dan selama belum terjangkau percobaan diulang tiap lima detik sampai
+berhasil. Jadi perangkat boleh dinyalakan belakangan tanpa perlu menekan
+tombol lagi.
+
+Alurnya berhenti di dua tempat: setelah connect berhasil, polling lima detik
+mengambil alih; dan `disconnect()` membatalkan timer, sehingga tombol "Putuskan
+Koneksi" langsung berlaku. Kegagalan dari tombol manual tidak menyisakan
+percobaan otomatis di belakang layar. Endpoint rusak atau kosong di database
+dianggap belum pernah dikonfigurasi, dan aplikasi tetap di mode demo.
+
+### Mengganti perangkat pengukuran
+
+Tombol "Ganti perangkat pengukuran" di tab Profil menghapus rekaman meter lama
+lalu melanjutkan dengan meter baru. Yang diganti bukan hanya URL: `local_devices`
+diganti baris dengan `local_id` baru, dan `device_key` yang menopang seluruh
+agregat ikut berubah. Alasannya register kWh PZEM me-reset di meter baru, jadi
+menggabungkan keduanya dalam satu grafik akan menjumlahkan selisih yang salah.
+
+- Rekaman `minute_aggregates`, `hourly_queue`, dan `hourly_history` milik
+  identitas lama dihapus. Baris perangkat lain tidak tersentuh.
+- `EnergyRecorder.reset()` ikut mengosongkan `device_key` yang di-memois, dan
+  register simulasi disegarkan, jadi sampel pertama setelah penggantian tidak
+  dibandingkan dengan angka meter sebelumnya.
+- Endpoint boleh diisi langsung di dialog. Kalau dikosongkan, aplikasi berhenti
+  di mode demo dan pengaturannya dilanjutkan di menu Koneksi API ESP.
+- Jam yang belum sempat terunggah ke Supabase ikut hilang. Data yang sudah ada di
+  Supabase tetap ada; perangkat barunya didaftarkan pada siklus sinkronisasi
+  berikutnya.
+
+### Menghapus riwayat
+
+Tombol "Hapus riwayat" di tab Profil mengosongkan angka tanpa mengganti meter.
+Dialognya konfirmasi dulu karena penghapusan tidak bisa dibatalkan.
+
+- `local_devices` **tidak** disentuh: `local_id`, `device_key`, dan endpoint
+  tetap, jadi polling tidak terputus dan rekaman baru menempel ke meter yang
+  sama. Inilah bedanya dari "Ganti perangkat pengukuran" di atas.
+- Rekaman `minute_aggregates`, `hourly_queue`, dan `hourly_history` dihapus,
+  termasuk jam yang belum sempat terunggah. Yang sudah ada di Supabase tidak
+  ikut terhapus.
+- Setelah menghapus, grafik dan ringkasan di semua tab langsung ikut kosong
+  (lihat "Menyegarkan semua pembaca riwayat" di bawah). Riwayat berikutnya
+  dijumlahkan dari nol karena register kWh PZEM masih berjalan.
+
+Hapus lokal adalah satu-satunya penghapusan yang tersedia di aplikasi, dan itu
+memang default yang benar. Alasannya Supabase adalah satu-satunya arsip jangka
+panjang: `pruneSynced` memangkas baris yang sudah terunggah dari `hourly_queue`
+setelah masa retensi, jadi HP bukan cadangan. Tombol yang menghapus dari server
+akan bersifat irreversible dari aplikasi dan mudah salah sentuh karena tidak bisa
+dipratinjau, sedangkan penghapusan manual di Supabase Dashboard bisa diekspor lebih
+dulu. Kalau nanti policy RLS diperketat, hapus dari server bisa ditambahkan
+tanpa mengubah pemanggilan yang sudah ada.
+
+### Menyegarkan semua pembaca riwayat
+
+Ada **dua** `EnergyHistoryProvider` yang hidup bersamaan: satu di atas aplikasi
+untuk Dashboard dan Profil, satu lagi di dalam tab Analisis
+(`lib/screens/home_shell.dart`). Yang kedua perlu `allowSyntheticWhenEmpty` supaya
+layar Analisis bisa dinilai sebelum ESP merekam apa pun, sedangkan yang pertama
+tidak boleh pernah menampilkan karangan.
+
+Konsekuensinya, `context.read<EnergyHistoryProvider>()` dari tab Profil hanya
+menemukan instance di atas aplikasi. Dulu "Hapus riwayat" dan "Ganti perangkat"
+memanggil `refresh()` di situ, sehingga **tab Analisis tidak pernah berubah** dan
+masih menampilkan angka lama sampai aplikasi ditutup. `HistoryInvalidator`
+(`lib/providers/history_invalidator.dart`) menutup celah itu:
+
+- `EnergyDataProvider.clearHistory()` dan `switchDevice()` memanggil
+  `historyInvalidator?.invalidate()` di dalam provider, jadi setiap pembaca
+  riwayat pasti diberi tahu tanpa perlu remember memanggil refresh manual.
+- Setiap `EnergyHistoryProvider` berlangganan ke sinyal itu dan memuat ulang
+  periodenya. Berhenti berlangganan di `dispose()`.
+- Sinyalnya **tidak** diturunkan dari `EnergyDataProvider`, karena provider itu
+  memanggil `notifyListeners()` setiap lima detik saat polling. Kalau Analisis
+  berlangganan ke sana, layarnya dibangun ulang terus-menerus tanpa ada yang
+  berubah. Ada test yang mengunci kedua sifat itu.
+
+Setelah penghapusan eksplisit, tab Analisis sengaja menampilkan keadaan kosong
+dan **tidak** diisi data contoh, sampai ada satu jam rekaman nyata masuk.
+`_suppressSynthetic` di `EnergyHistoryProvider` yang menahan itu, dan bendera itu
+mati lagi begitu periode yang dimuat punya baris nyata — jadi data contoh tetap
+bisa muncul untuk periode yang memang belum ada isinya, seperti sebelumnya.
+
+### Mengunduh data
+
+Bagian "Unduh data" di tab Analisis menulis riwayat periode yang sedang dipilih
+ke berkas CSV satu baris per jam, lalu membuka lembar bagikan.
+
+- Periode diambil dari tab Hari/Minggu/Bulan/Tahun yang aktif, jadi angka di
+  berkas sama persis dengan yang sedang dilihat. Jendelanya diambil dari
+  `EnergyHistoryService.windowFor`, bukan dihitung ulang, supaya ekspor dan
+  ringkasan tidak pernah berbeda rentang untuk waktu yang sama.
+- Isi berkas: `waktu`, `kwh`, `daya_rata_w`, `daya_min_w`, `daya_max_w`,
+  `tegangan_rata_v` (min/max), `arus_rata_a`, `arus_maks_a`,
+  `frekuensi_rata_hz` (min/max), `pf_rata`, `pf_min`, `jumlah_sampel`,
+  `durasi_teramati_detik`, `interval_estimasi`, `cakupan_persen`, `mutu_data`,
+  dan `is_demo`. Jam yang tidak punya sampel tidak ditulis, dan nilai min/max
+  yang tidak pernah terukur dibiarkan kosong — bukan diisi nol.
+- Pemisah kolom `;` dan desimal `,`, jadi berkas langsung tampil benar saat
+  dibuka di Excel versi Indonesia tanpa wizard impor. Untuk Python/Sheets,
+  gunakan `sep=';'`.
+- Penyalinan ke folder `Download/SmartEnergy` lewat `MediaStore` di kanal
+  `com.smartenergy.smart_energy/downloads` (lihat `MainActivity.kt`), jadi tidak
+  ada permintaan izin penyimpanan. Android 9 ke bawah, yang belum punya
+  `MediaStore.Downloads`, jatuh ke folder unduhan milik aplikasi.
+- Lekar bagikan memakai salinan di cache aplikasi, karena yang tersimpan di
+  Downloads berupa content URI yang tidak bisa dibaca sebagai berkas biasa.
+- Jam berpenanda `is_demo` ikut ditulis. Data simulasi tidak boleh hilang
+  begitu saja dari berkas, tapi tidak boleh juga tercampur tanpa penanda.
 
 ## Menjalankan
 
@@ -287,7 +406,7 @@ karena PostgREST membacanya untuk menentukan metode HTTP.
 Cakupan test:
 
 - `test/energy_metric_test.dart` — satuan metrik, klasifikasi batas, dan
-  konversi watt ke kW.
+  keutuhan watt dari meter sampai tampilan.
 - `test/energy_history_service_test.dart` — rentang periode, pembagian bucket
   per jam/hari/bulan kalender, kelengkapan data, dan perbandingan periode.
 - `test/layout_test.dart` — ketiga tab pada lebar 320, 400, dan 600 dp tanpa
@@ -300,3 +419,14 @@ Cakupan test:
 - `test/energy_recorder_test.dart`, `test/energy_sync_service_test.dart`,
   `test/energy_data_provider_test.dart`, `test/energy_api_client_test.dart` —
   pencatatan, sinkronisasi, polling, dan parsing API.
+- `test/energy_csv_exporter_test.dart` — isi CSV (kolom kosong tetap kosong,
+  `is_demo` ditandai), nama berkas per periode, dan penolakan ekspor saat
+  tidak ada perangkat atau tidak ada data. Ekspor nyata tidak pernah menyentuh
+  Android di dalam test karena `EnergyExportTarget` bisa diganti tiruan.
+- `test/energy_history_provider_test.dart` — perilaku data contoh, penahan
+  setelah penghapusan sampai rekaman nyata kembali, dan berhenti berlangganan
+  saat provider dibuang.
+- `test/clear_history_flow_test.dart` — alur penuh: seed satu jam pengukuran,
+  buka tab Analisis, hapus dari Profil, lalu pastikan tab Analisis benar-benar
+  kosong tanpa banner data contoh. Test ini gagal kalau invalidasi riwayat
+  diputus atau penahan data contoh dihapus.

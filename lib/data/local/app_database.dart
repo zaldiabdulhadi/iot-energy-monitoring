@@ -86,6 +86,49 @@ class EnergyDatabase extends _$EnergyDatabase {
     return existing.isEmpty ? null : existing.first.localId;
   }
 
+  /// Menghapus seluruh rekaman milik satu perangkat.
+  ///
+  /// Dipakai saat pengguna mengganti meter: angka satu meter tidak boleh
+  /// bercampur dengan meter lain di grafik dan ringkasan yang sama. Baris
+  /// perangkat lain tidak tersentuh karena setiap baris di ketiga tabel
+  /// dikunci dengan `device_key`.
+  Future<void> deleteDeviceData(String deviceKey) async {
+    await transaction(() async {
+      await (delete(minuteAggregates)
+            ..where((t) => t.deviceKey.equals(deviceKey)))
+          .go();
+      await (delete(hourlyQueue)..where((t) => t.deviceKey.equals(deviceKey))).go();
+      await (delete(hourlyHistory)
+            ..where((t) => t.deviceKey.equals(deviceKey)))
+          .go();
+    });
+  }
+
+  /// Mengganti baris perangkat dengan identitas baru.
+  ///
+  /// Baris lama dihapus dan digantikan `local_id` baru supaya meter berikutnya
+  /// tercatat sebagai perangkat yang berbeda, bukan melanjutkan meter lama.
+  /// Keduanya terjadi dalam satu transaksi karena [ensureLocalDevice] dan
+  /// [currentDeviceId] selalu membaca baris pertama: dua baris yang hidup
+  /// bersamaan membuat "perangkat aktif" jadi tidak pasti.
+  Future<LocalDeviceRow> replaceLocalDevice({
+    String? endpoint,
+    String? name,
+  }) async {
+    return transaction(() async {
+      await delete(localDevices).go();
+      await into(localDevices).insert(
+        LocalDevicesCompanion.insert(
+          localId: generateLocalId(),
+          createdAt: toStorage(DateTime.now()),
+          name: Value(name ?? 'ESP Smart Energy'),
+          endpoint: Value(endpoint),
+        ),
+      );
+      return select(localDevices).getSingle();
+    });
+  }
+
   Future<void> updateLocalDevice({
     required String localId,
     String? name,

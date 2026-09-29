@@ -306,7 +306,7 @@ class RecommendationEngine {
       for (final metric in EnergyMetric.values)
         MetricReading(
           metric: metric,
-          value: metric.readLive(reading) / metric.divisor,
+          value: metric.readLive(reading),
           status: metric.classify(metric.readLive(reading)),
         ),
     ];

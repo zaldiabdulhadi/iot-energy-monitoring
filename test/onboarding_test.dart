@@ -144,7 +144,7 @@ void main() {
     for (final label in [
       'Tegangan · V',
       'Arus · A',
-      'Daya · kW',
+      'Daya · W',
       'Energi · kWh',
       'Frekuensi · Hz',
       'Faktor daya · PF',

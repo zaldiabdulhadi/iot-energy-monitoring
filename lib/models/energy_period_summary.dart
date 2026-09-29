@@ -99,7 +99,7 @@ class EnergyPeriodSummary {
     required this.to,
     required this.totalKwh,
     required this.co2Kg,
-    required this.peakPowerKw,
+    required this.peakPowerW,
     required this.peakHour,
     required this.averageCoveragePct,
     required this.estimatedRatio,
@@ -124,7 +124,7 @@ class EnergyPeriodSummary {
       to: to,
       totalKwh: 0,
       co2Kg: 0,
-      peakPowerKw: 0,
+      peakPowerW: 0,
       peakHour: null,
       averageCoveragePct: 0,
       estimatedRatio: 0,
@@ -147,8 +147,8 @@ class EnergyPeriodSummary {
   /// Estimasi jejak karbon memakai faktor emisi grid perangkat.
   final double co2Kg;
 
-  /// Daya tertinggi dalam periode ini.
-  final double peakPowerKw;
+  /// Daya tertinggi dalam periode ini, dalam watt.
+  final double peakPowerW;
 
   /// Jam terjadi puncak daya, null kalau belum ada data.
   final DateTime? peakHour;
@@ -192,8 +192,8 @@ class EnergyPeriodSummary {
   /// Rata-rata satu metrik, null kalau metriknya tidak punya rata-rata.
   double? averageOf(EnergyMetric metric) => average[metric];
 
-  /// Rata-rata daya dalam kilowatt.
-  double get averagePowerKw => average[EnergyMetric.power] ?? 0;
+  /// Rata-rata daya dalam watt.
+  double get averagePowerW => average[EnergyMetric.power] ?? 0;
 
   /// Rata-rata faktor daya, atau null kalau belum ada data.
   double? get averagePowerFactor => average[EnergyMetric.powerFactor];

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/energy_metric.dart';
 import '../models/energy_period_summary.dart';
 import '../providers/energy_history_provider.dart';
+import '../services/energy_csv_exporter.dart';
 import '../theme/app_colors.dart';
 import '../widgets/insight_card.dart';
 import '../widgets/layout.dart';
@@ -22,6 +23,56 @@ class AnalyticsScreen extends StatefulWidget {
 
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
   EnergyMetric _chartMetric = EnergyMetric.power;
+  bool _exporting = false;
+
+  /// Menulis riwayat periode terpilih ke Downloads lalu membuka lembar bagikan.
+  ///
+  /// Tombol dikunci selama proses berjalan supaya dua sentuhan cepat tidak
+  /// menghasilkan dua berkas dengan nama berbeda di folder yang sama.
+  Future<void> _export(HistoryPeriod period) async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
+
+    final messenger = ScaffoldMessenger.of(context);
+    final exporter = context.read<EnergyCsvExporter>();
+    // Lembar bagikan di iPad harus punya titik jangkar, jadi koordinat layar
+    // dari daftar ini ikut dikirim. Di Android parameter ini diabaikan.
+    final anchor = context.findRenderObject() as RenderBox?;
+    final origin = anchor == null || !anchor.hasSize
+        ? null
+        : (anchor.localToGlobal(Offset.zero) & anchor.size);
+
+    try {
+      final result = await exporter.export(period, origin: origin);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '${result.rowCount} jam tersimpan di ${result.location}',
+          ),
+          backgroundColor: AppColors.success,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on EnergyExportException catch (error) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(error.message),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: const Text('Gagal menyimpan berkas. Cek ruang penyimpanan.'),
+          backgroundColor: AppColors.critical,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -108,7 +159,90 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           else
             InsightList(insights: history.insights),
         ],
+        const SizedBox(height: 18),
+        const SectionHeader(
+          title: 'Unduh data',
+          icon: Icons.download_rounded,
+        ),
+        const SizedBox(height: 10),
+        _ExportCard(
+          period: history.selectedPeriod,
+          exporting: _exporting,
+          onExport: () => _export(history.selectedPeriod),
+        ),
       ],
+    );
+  }
+}
+
+/// Mengunduh riwayat sebagai CSV satu baris per jam.
+///
+/// Periode yang diunduh mengikuti tab yang sedang dipilih di atas, jadi angka
+/// di berkas sama dengan yang sedang dilihat pengguna dan tidak ada lagi
+/// pemilihan rentang yang harus diisi ulang.
+class _ExportCard extends StatelessWidget {
+  const _ExportCard({
+    required this.period,
+    required this.exporting,
+    required this.onExport,
+  });
+
+  final HistoryPeriod period;
+  final bool exporting;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Berkas CSV · ${period.label.toLowerCase()}',
+            style: const TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Satu baris per jam: kWh, daya, tegangan, arus, frekuensi, dan '
+            'cakupan rekaman. Tersimpan di folder Download/SmartEnergy, lalu '
+            'dibagikan lewat lembar bagikan.',
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.45,
+              color: AppColors.textMuted,
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: exporting ? null : onExport,
+              icon: exporting
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.ios_share_rounded, size: 18),
+              label: Text(exporting ? 'Menyimpan…' : 'Unduh dan bagikan CSV'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                textStyle: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -407,8 +541,8 @@ class _SummaryCard extends StatelessWidget {
             tiles: [
               SummaryTile(
                 label: 'Daya puncak',
-                value: formatValue(summary.peakPowerKw, 2),
-                suffix: 'kW',
+                value: formatValue(summary.peakPowerW, 1),
+                suffix: 'W',
                 icon: Icons.bolt_rounded,
                 caption: summary.peakHour == null
                     ? 'belum ada'
@@ -416,8 +550,8 @@ class _SummaryCard extends StatelessWidget {
               ),
               SummaryTile(
                 label: 'Rata-rata daya',
-                value: formatValue(summary.averagePowerKw, 2),
-                suffix: 'kW',
+                value: formatValue(summary.averagePowerW, 1),
+                suffix: 'W',
                 icon: Icons.bolt_rounded,
                 caption: 'seluruh periode',
               ),
@@ -531,8 +665,16 @@ class _ConsumptionChart extends StatelessWidget {
       );
     }
 
+    // Konsumsi per jam (periode harian) ditampilkan dalam watt-hour supaya
+    // angkanya tidak selalu "0,xxx" di depan koma; bucket per hari/bulan tetap
+    // kilowatt-hour.
+    final perHour = summary.period == HistoryPeriod.day;
+    double toEnergy(double kwh) => perHour ? kwh * 1000 : kwh;
+    final String unit = perHour ? 'Wh' : 'kWh';
+    final int decimals = perHour ? 0 : 2;
+
     final maxY = _niceMax(
-      filled.map((b) => b.kwh).reduce((a, b) => a > b ? a : b),
+      filled.map((b) => toEnergy(b.kwh)).reduce((a, b) => a > b ? a : b),
     );
     final peak = filled.reduce((a, b) => b.kwh > a.kwh ? b : a);
     final labelStyle = _axisLabelStyle(summary.isDemo);
@@ -546,7 +688,7 @@ class _ConsumptionChart extends StatelessWidget {
         children: [
           SectionHeader(
             title: 'Konsumsi ${_unitOf(summary.period)}',
-            action: 'puncak ${formatValue(peak.kwh, 2)} kWh',
+            action: 'puncak ${formatValue(toEnergy(peak.kwh), decimals)} $unit',
           ),
           const SizedBox(height: 14),
           // Lebar kartu baru diketahui setelah kartu ini dibangun, sedangkan
@@ -575,7 +717,10 @@ class _ConsumptionChart extends StatelessWidget {
                           x: i,
                           barRods: [
                             BarChartRodData(
-                              toY: buckets[i].kwh,
+                              // Harus ikut satuan toEnergy, sama seperti maxY
+                              // di atas. Kalau lewat kWh langsung, batang
+                              // periode "Hari" tergambar seribu kali pendek.
+                              toY: toEnergy(buckets[i].kwh),
                               width: _barWidth(buckets.length),
                               color: buckets[i].isEmpty
                                   ? AppColors.border
@@ -627,7 +772,8 @@ class _ConsumptionChart extends StatelessWidget {
                         getTooltipItem: (group, _, rod, _) {
                           final bucket = buckets[group.x];
                           return BarTooltipItem(
-                            '${bucket.label}\n${formatValue(rod.toY, 2)} kWh',
+                            '${bucket.label}\n'
+                            '${formatValue(toEnergy(rod.toY), decimals)} $unit',
                             const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w600,

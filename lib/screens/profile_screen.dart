@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -94,6 +96,23 @@ class ProfileScreen extends StatelessWidget {
                 ),
               ),
               _SyncTile(),
+              GestureDetector(
+                onTap: () => _showSwitchDeviceDialog(context),
+                child: const _SettingTile(
+                  icon: Icons.swap_horiz_rounded,
+                  label: 'Ganti perangkat pengukuran',
+                  subtitle: 'Hapus riwayat lokal dan mulai dari meter baru',
+                ),
+              ),
+              GestureDetector(
+                onTap: () => _showClearHistoryDialog(context),
+                child: const _SettingTile(
+                  icon: Icons.delete_sweep_outlined,
+                  label: 'Hapus riwayat',
+                  subtitle: 'Kosongkan angka di HP. Yang sudah terunggah ke '
+                      'server tetap ada sebagai arsip',
+                ),
+              ),
               _SettingTile(
                 icon: Icons.info_outline_rounded,
                 label: 'Tentang Smart Energy',
@@ -225,8 +244,8 @@ class ProfileScreen extends StatelessWidget {
                 tiles: [
                   SummaryTile(
                     label: 'Rata-rata daya',
-                    value: formatValue(summary.averagePowerKw, 2),
-                    suffix: 'kW',
+                    value: formatValue(summary.averagePowerW, 1),
+                    suffix: 'W',
                     icon: Icons.electric_meter_rounded,
                     caption: 'seluruh periode',
                   ),
@@ -463,4 +482,177 @@ class _SyncTile extends StatelessWidget {
     if (sync.hasPending) return PillTone.warning;
     return PillTone.success;
   }
+}
+
+/// Mengganti meter pengukuran dari layar Profil.
+///
+/// Baris meter lama tidak boleh bercampur dengan meter baru: register kWh PZEM
+/// me-reset, jadi penjumlahan kedua perangkat akan menghitung selisih yang
+/// negatif. Karena itu penggantian bukan sekadar mengganti URL, tapi membuat
+/// identitas perangkat baru dan menghapus seluruh rekaman yang memakai
+/// identitas lama.
+Future<void> _showSwitchDeviceDialog(BuildContext context) async {
+  final provider = context.read<EnergyDataProvider>();
+  final controller =
+      TextEditingController(text: provider.endpoint?.toString() ?? '');
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Ganti perangkat pengukuran'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Seluruh rekaman lokal perangkat ini, termasuk jam yang belum '
+            'terunggah, akan dihapus dan riwayat dimulai dari nol. Data yang '
+            'sudah ada di Supabase tidak ikut terhapus.',
+            style: TextStyle(fontSize: 13, height: 1.5),
+          ),
+          const SizedBox(height: 18),
+          TextField(
+            controller: controller,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'Endpoint perangkat baru',
+              hintText: 'http://192.168.1.19:5000/api/data?api_key=...',
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Kosongkan dulu kalau alamat perangkat barunya belum diketahui, '
+            'lalu isi di menu Koneksi API ESP.',
+            style: TextStyle(fontSize: 11, height: 1.4),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Batal'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.critical),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Ganti perangkat'),
+        ),
+      ],
+    ),
+  );
+  controller.dispose();
+  if (confirmed != true || !context.mounted) return;
+
+  final endpoint = EnergyDataProvider.parseEndpoint(controller.text.trim());
+
+  try {
+    await provider.switchDevice(endpoint: endpoint);
+  } catch (_) {
+    if (!context.mounted) return;
+    _showMessage(context, 'Gagal mengganti perangkat. Coba lagi.', AppColors.critical);
+    return;
+  }
+  if (!context.mounted) return;
+
+  // Riwayat di semua tab sudah disegarkan sendiri oleh sinyal invalidasi yang
+  // dipicu `switchDevice`. Yang tersisa di sini hanya status antrean, karena
+  // jumlahnya ikut berubah dan provider itu tidak berlangganan ke sinyal itu.
+  final sync = context.read<SyncStatusProvider>();
+  await sync.refreshPending();
+  unawaited(sync.syncNow());
+
+  if (!context.mounted) return;
+  _showMessage(
+    context,
+    endpoint == null
+        ? 'Perangkat diganti. Isi endpoint di menu Koneksi API ESP.'
+        : 'Perangkat diganti, riwayat lokal dihapus.',
+    AppColors.success,
+  );
+
+  if (endpoint == null) {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const EspApiSettingsScreen()),
+    );
+  }
+}
+
+/// Menghapus angka tanpa mengganti meter.
+///
+/// Dipisah dari [_showSwitchDeviceDialog] karena dua halnya berbeda: di sini
+/// `local_id` dan endpoint tetap, jadi polling tidak terputus dan rekam baru
+/// langsung menempel ke perangkat yang sama. Data yang sudah ada di Supabase
+/// juga tidak disentuh, jadi penghapusan ini hanya berlaku di perangkat ini.
+Future<void> _showClearHistoryDialog(BuildContext context) async {
+  final provider = context.read<EnergyDataProvider>();
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Hapus riwayat?'),
+      // Isinya sengaja panjang supaya efek sampingnya kelihatan, dan
+      // `scrollable` menjaga dialog tetap bisa dibuka di layar pendek.
+      scrollable: true,
+      content: const Text(
+        'Yang dihapus hanya di HP: seluruh rekaman lokal perangkat ini, '
+        'termasuk jam yang belum sempat terunggah. Meter dan endpoint tetap '
+        'dipakai, jadi pencatatan lanjut dan riwayat baru mulai dari nol.\n\n'
+        'Data yang sudah sampai di server tidak dihapus dan tetap bisa dibaca '
+        'sebagai arsip. Namun HP bukan salinan cadangan: baris yang sudah '
+        'terunggah dipangkas dari antrean setelah masa retensi, jadi penghapusan '
+        'di sini tidak menghapus arsip server, dan yang sudah dipangkas dari HP '
+        'hanya masih ada di server.',
+        style: TextStyle(fontSize: 13, height: 1.5),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Batal'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.critical),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Hapus riwayat'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+
+  try {
+    await provider.clearHistory();
+  } catch (_) {
+    if (!context.mounted) return;
+    _showMessage(
+      context,
+      'Gagal menghapus riwayat. Coba lagi.',
+      AppColors.critical,
+    );
+    return;
+  }
+  if (!context.mounted) return;
+
+  // Grafik dan ringkasan sudah kosong sendiri: `clearHistory`_-nya memicu
+  // sinyal invalidasi yang dibaca semua pembaca riwayat, termasuk provider milik
+  // tab Analisis. Status antrean tidak berlangganan, jadi masih perlu dibaca
+  // ulang karena jumlah baris yang menunggu unggah ikut berubah.
+  await context.read<SyncStatusProvider>().refreshPending();
+
+  if (!context.mounted) return;
+  _showMessage(
+    context,
+    'Riwayat dihapus. Pencatatan lanjut dari meter yang sama.',
+    AppColors.success,
+  );
+}
+
+void _showMessage(BuildContext context, String message, Color color) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(message),
+      backgroundColor: color,
+      behavior: SnackBarBehavior.floating,
+    ),
+  );
 }

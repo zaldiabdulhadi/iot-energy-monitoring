@@ -6,16 +6,23 @@ import 'package:provider/provider.dart';
 import 'data/local/app_database.dart';
 import 'providers/energy_data_provider.dart';
 import 'providers/energy_history_provider.dart';
+import 'providers/history_invalidator.dart';
 import 'providers/sync_status_provider.dart';
 import 'screens/home_shell.dart';
 import 'screens/onboarding_screen.dart';
+import 'services/energy_csv_exporter.dart';
 import 'services/energy_history_service.dart';
+import 'services/energy_history_backfill.dart';
 import 'services/energy_recorder.dart';
 import 'services/energy_sync_service.dart';
+import 'services/energy_api_client.dart';
 import 'theme/app_theme.dart';
 
 class SmartEnergyApp extends StatelessWidget {
-  const SmartEnergyApp({
+  // Bukan `const` lagi karena instance aplikasi menyimpan satu invalidator
+  // riwayat yang harus bertahan selama widget hidup, dan `ChangeNotifier`
+  // tidak punya konstruktor `const`.
+  SmartEnergyApp({
     super.key,
     required this.database,
     this.syncService,
@@ -33,10 +40,18 @@ class SmartEnergyApp extends StatelessWidget {
   /// dibangun dengan asumsi tab pertama langsung terlihat.
   final bool showIntroOnLaunch;
 
+  /// Dibuat sekali per instance widget, bukan di dalam `build`.
+  ///
+  /// Kalau dibuat ulang saat build, tab yang sudah coba berlangganan akan
+  /// memegang instance yang tidak pernah berbunyi lagi, jadi penghapusan
+  /// riwayat di satu tab tidak akan sampai ke tab lain.
+  final HistoryInvalidator _invalidator = HistoryInvalidator();
+
   @override
   Widget build(BuildContext context) {
     final sync = syncService ?? EnergySyncService(database: database);
     final history = EnergyHistoryService(database: database);
+    final invalidator = _invalidator;
 
     return MultiProvider(
       providers: [
@@ -45,13 +60,41 @@ class SmartEnergyApp extends StatelessWidget {
         // instans ringkasan-nya sendiri, dan itu instans harus dibangun dari
         // layanan yang sama supaya tidak ada dua pembacaan database berbeda.
         Provider<EnergyHistoryService>.value(value: history),
+        // Dibagikan ke semua pembaca riwayat, bukan cuma yang di atas aplikasi,
+        // supaya penghapusan di satu tab langsung terasa di tab lain.
+        // `ChangeNotifierProvider` dipakai, bukan `Provider`, karena isinya
+        // turunan `Listenable` dan `Provider` menolak tipe seperti itu.
+        ChangeNotifierProvider<HistoryInvalidator>.value(value: invalidator),
+        // Ekspor memakai layanan dan database yang sama dengan ringkasan, jadi
+        // berkas yang diunduh tidak pernah berbeda dari angka di layar.
+        Provider<EnergyCsvExporter>(
+          create: (_) => EnergyCsvExporter(database: database, history: history),
+        ),
         ChangeNotifierProvider(
-          create: (_) => EnergyDataProvider(
-            recorder: EnergyRecorder(
+          create: (_) {
+            final apiClient = EnergyApiClient();
+            final provider = EnergyDataProvider(
+              apiClient: apiClient,
+              recorder: EnergyRecorder(
+                database: database,
+                pollInterval: const Duration(seconds: 5),
+              ),
               database: database,
-              pollInterval: const Duration(seconds: 5),
-            ),
-          )..startDemo(),
+              historyInvalidator: invalidator,
+              // Server collector menyimpan sampel mentah yang tidak pernah
+              // masuk ke database lokal, jadi sekali koneksi pertama berhasil
+              // seluruh riwayat itu ditarik masuk ke `hourly_history`.
+              backfill: EnergyHistoryBackfill(
+                database: database,
+                apiClient: apiClient,
+                pollInterval: const Duration(seconds: 5),
+              ),
+            )..startDemo();
+            // Ambil data perangkat otomatis begitu aplikasi dibuka, lalu ulangi
+            // percobaan tiap lima detik selama perangkat belum terjangkau.
+            unawaited(provider.autoConnect());
+            return provider;
+          },
         ),
         ChangeNotifierProvider(
           create: (_) => SyncStatusProvider(
@@ -62,7 +105,10 @@ class SmartEnergyApp extends StatelessWidget {
         // Ringkasan riwayat dimuat terpisah dari provider realtime supaya
         // pembacaan tiap 5 detik tidak ikut memicu rebuild grafik Analisis.
         ChangeNotifierProvider(
-          create: (_) => EnergyHistoryProvider(service: history)..load(),
+          create: (_) => EnergyHistoryProvider(
+            service: history,
+            invalidator: invalidator,
+          )..load(),
         ),
       ],
       child: MaterialApp(

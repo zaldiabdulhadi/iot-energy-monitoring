@@ -279,15 +279,15 @@ class _TodayCard extends StatelessWidget {
             tiles: [
               SummaryTile(
                 label: 'Rata-rata daya',
-                value: formatValue(data.averagePowerKw, 2),
-                suffix: 'kW',
+                value: formatValue(data.averagePowerW, 1),
+                suffix: 'W',
                 icon: Icons.electric_meter_rounded,
                 caption: 'seluruh periode',
               ),
               SummaryTile(
                 label: 'Daya puncak',
-                value: formatValue(data.peakPowerKw, 2),
-                suffix: 'kW',
+                value: formatValue(data.peakPowerW, 1),
+                suffix: 'W',
                 icon: Icons.bolt_rounded,
                 color: AppColors.warning,
                 caption: data.peakHour == null
@@ -471,7 +471,7 @@ class _LiveChartCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final samples = provider.recentPowerKw;
+    final samples = provider.recentPowerW;
     if (samples.length < 2) return const SizedBox.shrink();
 
     return AppCard(
@@ -513,7 +513,7 @@ class _LiveChartCard extends StatelessWidget {
                     getTooltipItems: (spots) => [
                       for (final spot in spots)
                         LineTooltipItem(
-                          '${formatValue(spot.y, 2)} kW',
+                          '${formatValue(spot.y, 1)} W',
                           const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w600,

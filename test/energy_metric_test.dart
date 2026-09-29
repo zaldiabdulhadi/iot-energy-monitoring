@@ -14,16 +14,14 @@ void main() {
       );
     });
 
-    test('hanya daya yang perlu pembagi satuan', () {
-      // Meter melaporkan daya dalam watt, sedangkan metrik ini ditampilkan
-      // dalam kilowatt.
-      expect(EnergyMetric.power.divisor, 1000);
-      // Register energi PZEM sudah dalam kWh, jadi tidak boleh dibagi lagi.
-      expect(EnergyMetric.energy.divisor, 1);
-      expect(EnergyMetric.voltage.divisor, 1);
-      expect(EnergyMetric.current.divisor, 1);
-      expect(EnergyMetric.frequency.divisor, 1);
-      expect(EnergyMetric.powerFactor.divisor, 1);
+    test('setiap metrik memakai satuan yang sama dengan meter', () {
+      // Tidak ada konversi di enum: daya tetap watt, register energi tetap kWh.
+      expect(EnergyMetric.power.unit, 'W');
+      expect(EnergyMetric.energy.unit, 'kWh');
+      expect(EnergyMetric.voltage.unit, 'V');
+      expect(EnergyMetric.current.unit, 'A');
+      expect(EnergyMetric.frequency.unit, 'Hz');
+      expect(EnergyMetric.powerFactor.unit, 'PF');
     });
 
     test('label rentang menyisakan spasi sebelum satuan', () {
@@ -83,14 +81,14 @@ void main() {
       expect(EnergyMetric.energy.readLive(reading), 4210);
     });
 
-    test('classifyLive mengubah daya ke kW sebelum menilai', () {
+    test('classifyLive mempertahankan daya dalam watt', () {
       final byMetric = {
         for (final r in RecommendationEngine.classifyLive(reading))
           r.metric: r,
       };
 
-      // 1800 W harus tampil dan dinilai sebagai 1,8 kW, bukan 1800.
-      expect(byMetric[EnergyMetric.power]!.value, closeTo(1.8, 1e-9));
+      // 1800 W harus tampil dan dinilai sebagai 1800, bukan 1,8.
+      expect(byMetric[EnergyMetric.power]!.value, closeTo(1800, 1e-9));
       expect(byMetric[EnergyMetric.voltage]!.value, closeTo(225, 1e-9));
       expect(byMetric[EnergyMetric.voltage]!.isHealthy, isTrue);
       expect(byMetric[EnergyMetric.frequency]!.isHealthy, isTrue);
@@ -108,13 +106,13 @@ void main() {
           sampleCount: samples,
         );
 
-    test('rata-rata dan batas daya ikut dikonversi ke kW', () {
-      // 180.000 W dibagi 60 sampel = 3000 W, lalu 3 kW.
+    test('rata-rata dan batas daya tetap dalam watt', () {
+      // 180.000 W dibagi 60 sampel = 3000 W.
       final hourly = hourlyWithPower(180000);
 
-      expect(EnergyMetric.power.avgOf(hourly), closeTo(3, 1e-9));
-      expect(EnergyMetric.power.minOf(hourly), closeTo(3, 1e-9));
-      expect(EnergyMetric.power.maxOf(hourly), closeTo(3, 1e-9));
+      expect(EnergyMetric.power.avgOf(hourly), closeTo(3000, 1e-9));
+      expect(EnergyMetric.power.minOf(hourly), closeTo(3000, 1e-9));
+      expect(EnergyMetric.power.maxOf(hourly), closeTo(3000, 1e-9));
     });
 
     test('batas yang tidak direkam tetap null, bukan nol', () {

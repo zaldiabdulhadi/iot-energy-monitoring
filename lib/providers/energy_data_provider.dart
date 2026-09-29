@@ -3,11 +3,14 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
+import '../data/local/app_database.dart';
 import '../models/energy_metric.dart';
 import '../models/energy_reading.dart';
 import '../services/energy_api_client.dart';
+import '../services/energy_history_backfill.dart';
 import '../services/energy_recorder.dart';
 import '../services/recommendation_engine.dart';
+import 'history_invalidator.dart';
 
 enum DataSource { demo, api }
 
@@ -15,21 +18,62 @@ enum DataSource { demo, api }
 ///
 /// Isinya hanya enam metrik yang benar-benar dikirim JSON ESP. Tidak ada data
 /// per perangkat: JSON itu tidak memuat identitas perangkat sama sekali, jadi
-/// memecahnya jadi "AC 0,86 kW" hanya bisa dilakukan dengan mengarang angka.
+/// memecahnya jadi "AC 860 W" hanya bisa dilakukan dengan mengarang angka.
 class EnergyDataProvider extends ChangeNotifier {
   EnergyDataProvider({
     EnergyApiClient? apiClient,
     this.pollInterval = const Duration(seconds: 5),
     this.recorder,
+    this.database,
+    this.historyInvalidator,
+    this.backfill,
   }) : _apiClient = apiClient ?? EnergyApiClient();
 
   final EnergyApiClient _apiClient;
   final EnergyRecorder? recorder;
   final Duration pollInterval;
 
+  /// Penarik riwayat lama dari server collector, dijalankan sekali setelah
+  /// koneksi pertama berhasil.
+  ///
+  /// Disuntikkan supaya bisa diganti objek palsu di test, dan supaya tab yang
+  /// tidak butuh impor tidak membayar biaya paging-nya.
+  final EnergyHistoryBackfill? backfill;
+
+  /// Sumber endpoint tersimpan untuk [autoConnect].
+  ///
+  /// Null berarti fitur auto-connect mati, dan aplikasi hanya mengambil data
+  /// setelah pengguna menekan tombol di layar Koneksi API ESP.
+  final EnergyDatabase? database;
+
+  /// Kabar ke semua pembaca riwayat bahwa angka mereka sudah usang.
+  ///
+  /// Disuntikkan, bukan dibuat sendiri, supaya satu instance dipakai bersama
+  /// oleh provider di atas aplikasi dan provider milik tab Analisis. Tanpa ini,
+  /// penghapusan di tab Profil hanya menyegarkan satu dari keduanya dan tab
+  /// Analisis masih menampilkan angka lama. Null berarti tidak ada pembaca
+  /// riwayat yang perlu diberi tahu, misal pada test yang tidak menyangkut
+  /// tampilan.
+  final HistoryInvalidator? historyInvalidator;
+
   Timer? _demoTimer;
   Timer? _pollTimer;
+  Timer? _retryTimer;
   bool _pollInFlight = false;
+
+  /// Impor riwayat hanya jalan sekali per aplikasi, bukan setiap polling.
+  ///
+  /// Dicoba dari [connect] saja, bukan dari [_poll]: `_poll` berjalan tiap lima
+  /// detik, jadi impor di sana akan mengulang paging seluruh riwayat server
+  /// terus-menerus. [connect] sendiri juga dipanggil ulang oleh [_startRetry],
+  /// jadi [_importHistory] yang memeriksa [_historyImported].
+  bool _historyImported = false;
+
+  /// True selama percobaan otomatis masih diizinkan.
+  ///
+  /// Dipakai [disconnect] untuk membatalkan retry, supaya tombol "Putuskan
+  /// Koneksi" tidak langsung ditimpa percobaan berikutnya.
+  bool _autoConnectRequested = false;
 
   /// Dipakai untuk menahan notifyListeners setelah dispose(), karena permintaan
   /// yang sudah berjalan tidak ikut terhenti oleh pembatalan timer.
@@ -68,9 +112,10 @@ class EnergyDataProvider extends ChangeNotifier {
   double get voltage => _reading?.voltage ?? 0;
   double get current => _reading?.current ?? 0;
 
-  /// Daya dalam kilowatt. Nama ini dipakai langsung oleh pengujian, jadi
-  /// Despite pembacaan di API memakai watt, konversi ke kilowatt tetap di sini.
-  double get currentKw => (_reading?.power ?? 0) / 1000;
+  /// Daya dalam watt, sama seperti yang dikirim meter.
+  ///
+  /// Nama ini dipakai langsung oleh pengujian.
+  double get currentW => _reading?.power ?? 0;
 
   /// Register kumulatif meter, bukan konsumsi satu periode.
   ///
@@ -111,16 +156,16 @@ class EnergyDataProvider extends ChangeNotifier {
   /// Berbeda dari riwayat per jam, ini benar-benar data mentah lima menit
   /// terakhir, jadi label grafiknya harus menyebut rentang itu dan bukan
   /// "hari".
-  final List<double> _recentPowerKw = <double>[];
+  final List<double> _recentPowerW = <double>[];
 
   static const int _recentPowerWindow = 60;
 
-  List<double> get recentPowerKw => List.unmodifiable(_recentPowerKw);
+  List<double> get recentPowerW => List.unmodifiable(_recentPowerW);
 
   void _trackPower() {
-    _recentPowerKw.add(currentKw);
-    if (_recentPowerKw.length > _recentPowerWindow) {
-      _recentPowerKw.removeAt(0);
+    _recentPowerW.add(currentW);
+    if (_recentPowerW.length > _recentPowerWindow) {
+      _recentPowerW.removeAt(0);
     }
   }
 
@@ -153,6 +198,58 @@ class EnergyDataProvider extends ChangeNotifier {
     unawaited(recorder?.record(reading, now: now, isDemo: true));
   }
 
+  /// Mengambil data dari perangkat memakai endpoint yang tersimpan.
+  ///
+  /// Dipanggil sekali saat aplikasi dibuka supaya pengguna tidak perlu menekan
+  /// tombol setiap kali aplikasi dijalankan. Kalau perangkat belum terjangkau,
+  /// percobaan diulang tiap [pollInterval] sampai berhasil, atau sampai
+  /// pengguna memutus koneksi secara manual. Tanpa endpoint tersimpan aplikasi
+  /// tetap di mode demo, sama seperti sebelumnya.
+  Future<void> autoConnect() async {
+    final database = this.database;
+    if (database == null || _disposed) return;
+
+    final device =
+        await (database.select(database.localDevices)).getSingleOrNull();
+    final saved = parseEndpoint(device?.endpoint);
+    if (saved == null) return;
+
+    _autoConnectRequested = true;
+    if (_disposed) return;
+    await connect(endpoint: saved);
+  }
+
+  /// Menerjemahkan teks endpoint menjadi [Uri] yang bisa dipakai.
+  ///
+  /// Satu-satunya aturan validasi URL di aplikasi ini, dipakai juga oleh layar
+  /// pengaturan dan dialog ganti perangkat. String yang rusak dianggap belum
+  /// pernah dikonfigurasi, bukan error yang menggagalkan memulai aplikasi.
+  static Uri? parseEndpoint(String? raw) {
+    final endpoint = Uri.tryParse(raw?.trim() ?? '');
+    if (endpoint == null ||
+        (endpoint.scheme != 'http' && endpoint.scheme != 'https') ||
+        endpoint.host.isEmpty) {
+      return null;
+    }
+    return endpoint;
+  }
+
+  void _startRetry() {
+    // Percobaan ulang hanya milik alur otomatis. Tombol manual yang gagal
+    // tidak boleh meninggalkan timer berputar di belakang layar.
+    if (!_autoConnectRequested) return;
+    _retryTimer ??= Timer.periodic(pollInterval, (_) {
+      if (!_autoConnectRequested || _disposed) return;
+      if (_connecting || _source == DataSource.api) return;
+      unawaited(connect());
+    });
+  }
+
+  void _stopRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+  }
+
   Future<void> connect({Uri? endpoint}) async {
     if (_connecting) return;
 
@@ -176,16 +273,20 @@ class EnergyDataProvider extends ChangeNotifier {
       _demoTimer?.cancel();
       _demoTimer = null;
       _startPolling();
+      _stopRetry();
+      unawaited(_importHistory(target));
     } on EnergyApiException catch (error) {
       _connected = false;
       _connectedEndpoint = null;
       _connectedSince = null;
       _error = error.message;
+      _startRetry();
     } catch (_) {
       _connected = false;
       _connectedEndpoint = null;
       _connectedSince = null;
       _error = 'Terjadi kesalahan saat membaca API ESP.';
+      _startRetry();
     } finally {
       _connecting = false;
       notifyListeners();
@@ -238,6 +339,31 @@ class EnergyDataProvider extends ChangeNotifier {
     unawaited(recorder?.record(reading, now: _lastUpdated, isDemo: false));
   }
 
+  /// Menarik riwayat yang sudah ada di server ke `hourly_history`.
+  ///
+  /// Prosesnya murni tambahan, jadi kegagalan apa pun di sini dibiarkan
+  /// diam-diam: pencatatan live tidak boleh terganggu karena server lambat atau
+  /// karena belum ada riwayat. Bendera penanda ditandai di awal, bukan di akhir,
+  /// supaya percobaan berikutnya setelah gagal tidak mengulang paging yang sama
+  /// setiap lima detik.
+  Future<void> _importHistory(Uri endpoint) async {
+    if (_historyImported) return;
+    _historyImported = true;
+    final service = backfill;
+    if (service == null) return;
+
+    try {
+      final result = await service.run(endpoint);
+      if (result.isEmpty || _disposed) return;
+      // Kabar dua pembaca riwayat supaya tab Analisis ikut memuat ulang.
+      historyInvalidator?.invalidate();
+    } on EnergyApiException {
+      return;
+    } catch (error) {
+      debugPrint('Impor riwayat server gagal: $error');
+    }
+  }
+
   Future<void> persistPendingHistory() async {
     await recorder?.flush();
   }
@@ -248,13 +374,15 @@ class EnergyDataProvider extends ChangeNotifier {
     _pollTimer?.cancel();
     _pollTimer = null;
     _pollInFlight = false;
+    _autoConnectRequested = false;
+    _stopRetry();
     _connected = false;
     _connecting = false;
     _connectedEndpoint = null;
     _connectedSince = null;
     _lastUpdated = null;
     _reading = null;
-    _recentPowerKw.clear();
+    _recentPowerW.clear();
     _endpoint = null;
     _error = null;
     _source = DataSource.demo;
@@ -262,11 +390,88 @@ class EnergyDataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Mengganti meter pengukuran dengan identitas perangkat yang baru.
+  ///
+  /// Rekaman meter lama dihapus, lalu `local_devices` diganti baris dengan
+  /// `local_id` baru. Ini bukan sekadar mengganti URL: `device_key` yang
+  /// menopang seluruh agregat berubah, sehingga grafik dan ringkasan yang
+  /// menampilkan meter lama tidak bercampur dengan meter baru yang register
+  /// kWh-nya me-reset.
+  ///
+  /// Endpoint kosong berarti aplikasi berhenti di mode demo sampai pengguna
+  /// mengisinya di layar Koneksi API ESP. Endpoint yang diisi langsung dipakai
+  /// untuk connect, termasuk percobaan ulang otomatisnya.
+  Future<void> switchDevice({Uri? endpoint}) async {
+    final database = this.database;
+    if (database == null) {
+      throw StateError('Ganti perangkat butuh database lokal.');
+    }
+
+    await persistPendingHistory();
+    // Disconnect memulai ulang mode demo, jadi register simulasi harus disegarkan
+    // lebih dulu: sampel pertama setelah switch membaca register meter lama.
+    _demo.resetRegister();
+    await disconnect();
+
+    final previousKey = await database.currentDeviceId();
+    if (previousKey != null) {
+      await database.deleteDeviceData(previousKey);
+    }
+    await database.replaceLocalDevice(endpoint: endpoint?.toString());
+    recorder?.reset();
+    notifyListeners();
+    // Setiap pembaca riwayat harus memuat ulang: yang di atas aplikasi dan
+    // yang di tab Analisis, karena keduanya hidup di subtree berbeda.
+    historyInvalidator?.invalidate();
+
+    if (endpoint != null) {
+      _autoConnectRequested = true;
+      await connect(endpoint: endpoint);
+    }
+  }
+
+  /// Menghapus seluruh riwayat pengukuran perangkat yang sedang aktif.
+  ///
+  /// Bedanya dengan [switchDevice] ada di sini: meter dan endpoint-nya tetap,
+  /// hanya angka yang hilang. Jadi polling tidak terputus, `device_key` tidak
+  /// berubah, dan rekam baru mulai dari nol tanpa mencampur angka lama.
+  ///
+  /// Cakupannya hanya SQLite di HP. Supabase tidak pernah dihapus dari sini,
+  /// dan itu disengaja: baris yang sudah terunggah dipangkas dari antrean
+  /// setelah masa retensi, jadi HP bukan cadangan. Menghapus dari sisi server
+  /// hanya boleh dilakukan di luar aplikasi, di mana datanya bisa diekspor
+  /// lebih dulu.
+  ///
+  /// Antrean unggahan ikut terhapus karena isinya bagian dari riwayat yang
+  /// diminta dihapus; baris yang sudah sampai ke server tetap ada di sana.
+  Future<void> clearHistory() async {
+    final database = this.database;
+    if (database == null) {
+      throw StateError('Hapus riwayat butuh database lokal.');
+    }
+
+    await persistPendingHistory();
+    final deviceKey = await database.currentDeviceId();
+    if (deviceKey == null) {
+      return;
+    }
+
+    await database.deleteDeviceData(deviceKey);
+    recorder?.reset();
+    _recentPowerW.clear();
+    // Register simulasi disegarkan supaya kWh setelah reset mulai dari nol,
+    // sama seperti meter yang baru dipasang.
+    _demo.resetRegister();
+    notifyListeners();
+    historyInvalidator?.invalidate();
+  }
+
   @override
   void dispose() {
     _disposed = true;
     _demoTimer?.cancel();
     _pollTimer?.cancel();
+    _stopRetry();
     _apiClient.close();
     super.dispose();
   }
@@ -297,6 +502,16 @@ class _DemoSignal {
   /// menganggap setiap interval tidak punya meter yang bergerak sehingga seluruh
   /// riwayat demo ditandai "estimasi".
   DateTime? _lastSampleAt;
+
+  /// Menyamakan kembali register kumulatif dan waktu sampel terakhir.
+  ///
+  /// Dipakai saat pengguna mengganti meter: register PZEM yang baru mulai dari
+  /// nol harus menjadi baseline baru, bukan dibandingkan dengan angka meter
+  /// sebelumnya.
+  void resetRegister() {
+    _counter = 0;
+    _lastSampleAt = null;
+  }
 
   /// Bentuk beban dasar per jam, dalam kilowatt.
   ///

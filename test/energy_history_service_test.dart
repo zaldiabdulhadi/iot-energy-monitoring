@@ -119,18 +119,16 @@ void main() {
   });
 
   group('satuan metrik', () {
-    test('rata-rata dan batas daya dikonversi dari watt ke kW', () async {
-      // 3000 W = 3 kW. Kalau divisor tidak diterapkan, angka ini akan tampil
-      // sebagai 3000 kW di kartu ringkasan.
+    test('rata-rata dan batas daya tetap dalam watt', () async {
       await seedHour(DateTime(2026, 3, 15, 10), powerW: 3000);
 
       final report = await service.report(HistoryPeriod.day, now: now);
       final summary = report.summary;
 
-      expect(summary.averageOf(EnergyMetric.power), closeTo(3.0, 1e-9));
-      expect(summary.averagePowerKw, closeTo(3.0, 1e-9));
-      expect(summary.maximums[EnergyMetric.power], closeTo(3.0, 1e-9));
-      expect(summary.minimums[EnergyMetric.power], closeTo(3.0, 1e-9));
+      expect(summary.averageOf(EnergyMetric.power), closeTo(3000, 1e-9));
+      expect(summary.averagePowerW, closeTo(3000, 1e-9));
+      expect(summary.maximums[EnergyMetric.power], closeTo(3000, 1e-9));
+      expect(summary.minimums[EnergyMetric.power], closeTo(3000, 1e-9));
     });
 
     test('metrik tanpa pembatas tidak menghasilkan nilai batas', () async {
@@ -328,7 +326,7 @@ void main() {
       expect(summary.averageOf(EnergyMetric.voltage), inInclusiveRange(210, 240));
       expect(summary.averageOf(EnergyMetric.frequency), inInclusiveRange(49.5, 50.5));
       expect(summary.averageOf(EnergyMetric.powerFactor), greaterThanOrEqualTo(0.9));
-      expect(summary.averagePowerKw, inInclusiveRange(0.1, 1.5));
+      expect(summary.averagePowerW, inInclusiveRange(100, 1500));
       expect(
         EnergyMetric.powerFactor.classify(summary.averagePowerFactor!),
         MetricStatus.healthy,

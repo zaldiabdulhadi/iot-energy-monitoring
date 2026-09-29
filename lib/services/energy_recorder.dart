@@ -44,11 +44,17 @@ class EnergyRecorder {
     return _serialize(() => _closeCompletedHours(timestamp));
   }
 
+  /// Membuang semua state yang menempel pada satu perangkat.
+  ///
+  /// [_deviceKey] ikut dikosongkan karena device itu hasil baca database dan
+  /// sudah di-memois: tanpa itu, rekaman setelah pengguna mengganti meter
+  /// masih ditulis memakai identitas perangkat lama.
   void reset() {
     _buffer = null;
     _previous = null;
     _previousAt = null;
     _lastIsDemo = null;
+    _deviceKey = null;
   }
 
   Future<T> _serialize<T>(Future<T> Function() action) {

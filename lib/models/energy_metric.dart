@@ -40,12 +40,10 @@ enum EnergyMetric {
   power(
     jsonKey: 'power',
     label: 'Daya',
-    unit: 'kW',
+    // Meter sudah melaporkan watt, jadi satuan tampil ikut watt tanpa konversi.
+    unit: 'W',
     icon: Icons.electric_meter_rounded,
-    decimals: 2,
-    // Meter melaporkan watt, metrik ini ditampilkan dalam kilowatt supaya
-    // konsisten dengan satuan kWh.
-    divisor: 1000,
+    decimals: 1,
   ),
   energy(
     jsonKey: 'energy',
@@ -80,7 +78,6 @@ enum EnergyMetric {
     required this.decimals,
     this.healthyLow,
     this.healthyHigh,
-    this.divisor = 1,
   });
 
   /// Nama field di JSON ESP. Hanya faktor daya yang berbeda: `pf`.
@@ -91,9 +88,6 @@ enum EnergyMetric {
 
   /// Digit setelah koma untuk format angka.
   final int decimals;
-
-  /// Pembagi saat membaca meter.
-  final double divisor;
 
   /// Batas bawah rentang sehat, null berarti tidak dievaluasi.
   final double? healthyLow;
@@ -115,14 +109,13 @@ enum EnergyMetric {
     return '>= ${low!} $unit';
   }
 
-  /// Menilai satu nilai mentah dari meter.
+  /// Menilai satu nilai metrik dalam satuan tampil.
   ///
   /// Batas yang dilampaui sedikit masih dianggap [MetricStatus.warning] supaya
   /// pengguna melihat tren mendekat batas sebelum benar-benar keluar. Hanya
   /// pelanggaran lebih dari 5% dari rentang yang naik ke
   /// [MetricStatus.critical].
-  MetricStatus classify(double rawValue) {
-    final value = rawValue / divisor;
+  MetricStatus classify(double value) {
     final low = healthyLow;
     final high = healthyHigh;
     if (low == null && high == null) return MetricStatus.healthy;
@@ -158,13 +151,12 @@ enum EnergyMetric {
 
   /// Rata-rata metrik ini pada satu agregat per jam, dalam satuan tampil.
   ///
-  /// [EnergyHourly] menyimpan daya dalam watt sementara metrik ini ditampilkan
-  /// dalam kW, jadi hasilnya ikut dibagi [divisor] supaya angka yang masuk ke
-  /// grafik dan tabel sama dengan yang dipakai di kartu live.
+  /// [EnergyHourly] sudah menyimpan daya dalam watt, sama dengan satuan metrik
+  /// ini, jadi tidak ada konversi lagi di sini.
   double avgOf(EnergyHourly hourly) => switch (this) {
         EnergyMetric.voltage => hourly.avgVoltage,
         EnergyMetric.current => hourly.avgCurrent,
-        EnergyMetric.power => hourly.avgPowerW / divisor,
+        EnergyMetric.power => hourly.avgPowerW,
         EnergyMetric.frequency => hourly.avgFrequency,
         EnergyMetric.powerFactor => hourly.avgPowerFactor,
         // Energi adalah akumulator, bukan rata-rata. Rata-ratanya tidak
@@ -180,7 +172,7 @@ enum EnergyMetric {
   double? minOf(EnergyHourly hourly) => switch (this) {
         EnergyMetric.voltage => hourly.voltageMin,
         EnergyMetric.current => null,
-        EnergyMetric.power => hourly.powerMin == null ? null : hourly.powerMin! / divisor,
+        EnergyMetric.power => hourly.powerMin,
         EnergyMetric.frequency => hourly.frequencyMin,
         EnergyMetric.powerFactor => hourly.powerFactorMin,
         EnergyMetric.energy => null,
@@ -190,7 +182,7 @@ enum EnergyMetric {
   double? maxOf(EnergyHourly hourly) => switch (this) {
         EnergyMetric.voltage => hourly.voltageMax,
         EnergyMetric.current => hourly.currentMax,
-        EnergyMetric.power => hourly.powerMax == null ? null : hourly.powerMax! / divisor,
+        EnergyMetric.power => hourly.powerMax,
         EnergyMetric.frequency => hourly.frequencyMax,
         EnergyMetric.powerFactor => null,
         EnergyMetric.energy => null,
@@ -223,7 +215,7 @@ class MetricReading {
 
   final EnergyMetric metric;
 
-  /// Nilai dalam satuan tampil, `power` sudah dikonversi ke kW.
+  /// Nilai dalam satuan tampil, jadi daya sudah dalam watt.
   final double value;
   final MetricStatus status;
 

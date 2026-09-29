@@ -59,3 +59,9 @@ app.*.map.json
 # Metadata lokal Supabase CLI.
 /supabase/.temp/
 
+# Database kerja lokal. `server/data.db` berisi ribuan sampel pengukuran asli
+# milik instalasi pribadi, jadi tidak pernah ikut ter-*commit*. Skema-nya
+# dibuat ulang otomatis oleh `init_db()` setiap server dijalankan.
+server/*.db
+server/*.db-journal
+

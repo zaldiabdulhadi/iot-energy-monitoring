@@ -161,6 +161,13 @@ class EnergyHistoryService {
   /// Untuk "Hari" dipakai ujung jam berjalan, supaya ada tepat 24 titik per jam
   /// yang sejajar dengan batas jam dan tidak ada titik dari jam yang belum
   /// terjadi.
+  /// Jendela waktu satu periode, dipakai juga oleh ekspor CSV.
+  ///
+  /// Diekspos supaya berkas yang diunduh dan ringkasan di layar tidak pernah
+  /// membaca rentang yang berbeda untuk waktu yang sama.
+  ({DateTime from, DateTime to}) windowFor(HistoryPeriod period, DateTime now) =>
+      (from: _rangeStart(period, now), to: _rangeEnd(period, now));
+
   DateTime _rangeEnd(HistoryPeriod period, DateTime now) =>
       switch (period.granularity) {
         HistoryGranularity.hour =>
@@ -193,7 +200,7 @@ class EnergyHistoryService {
     var observedSeconds = 0.0;
     var estimatedIntervals = 0;
     var sampleCount = 0;
-    var peakPowerKw = 0.0;
+    var peakPowerW = 0.0;
     DateTime? peakHour;
 
     final minimums = <EnergyMetric, double>{};
@@ -206,8 +213,8 @@ class EnergyHistoryService {
       estimatedIntervals += row.estimatedIntervals;
       sampleCount += row.sampleCount;
 
-      if (row.powerMax != null && row.powerMax! > peakPowerKw) {
-        peakPowerKw = row.powerMax!;
+      if (row.powerMax != null && row.powerMax! > peakPowerW) {
+        peakPowerW = row.powerMax!;
         peakHour = row.hourStart;
       }
 
@@ -246,7 +253,7 @@ class EnergyHistoryService {
       to: to,
       totalKwh: totalKwh,
       co2Kg: totalKwh * settings.gridCo2KgPerKwh,
-      peakPowerKw: peakPowerKw / 1000,
+      peakPowerW: peakPowerW,
       peakHour: peakHour,
       averageCoveragePct:
           usable.isEmpty ? 0 : (boundedObserved / (usable.length * 3600)) * 100,
