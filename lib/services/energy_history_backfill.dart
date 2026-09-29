@@ -26,12 +26,6 @@ class EnergyHistoryBackfill {
   final EnergyApiClient apiClient;
   final Duration pollInterval;
 
-  /// Batas halaman per permintaan, sama dengan batas server.
-  static const int _pageSize = 500;
-
-  /// Pengaman terhadap data rusak yang membuat paging tidak pernah berhenti.
-  static const int _maxPages = 200;
-
   /// Mengimpor seluruh riwayat yang bisa dibaca dari [endpoint].
   ///
   /// Hanya jam yang sudah lewat yang disentuh. Jam berjalan masih ditulis
@@ -40,7 +34,7 @@ class EnergyHistoryBackfill {
   Future<BackfillResult> run(Uri endpoint, {DateTime? now}) async {
     final timestamp = now ?? DateTime.now();
     final cutoff = floorToHour(timestamp);
-    final rows = await _fetchAll(endpoint);
+    final rows = await apiClient.fetchAllHistory(endpoint);
     if (rows.isEmpty) return const BackfillResult(samples: 0, hours: 0);
 
     final samples = _parse(rows, cutoff);
@@ -72,46 +66,6 @@ class EnergyHistoryBackfill {
     final hours = samples.map((sample) => floorToHour(sample.at)).toSet().length;
 
     return BackfillResult(samples: samples.length, hours: hours);
-  }
-
-  /// Menarik halaman demi halaman ke arah baris lama sampai habis.
-  Future<List<Map<String, dynamic>>> _fetchAll(Uri endpoint) async {
-    final collected = <Map<String, dynamic>>[];
-    int? beforeId;
-    var pages = 0;
-
-    while (pages < _maxPages) {
-      final page = await apiClient.fetchHistory(
-        endpoint,
-        beforeId: beforeId,
-        limit: _pageSize,
-      );
-      pages += 1;
-      if (page.isEmpty) break;
-
-      // `id` menurun antar halaman. Kalau halaman terbaru tidak punya `id`,
-      // paging dihentikan saja supaya tidak berulang minta halaman yang sama.
-      final ids = page
-          .map((row) => row['id'])
-          .whereType<num>()
-          .map((id) => id.toInt())
-          .toList();
-      if (ids.isEmpty) {
-        collected.addAll(page);
-        break;
-      }
-      if (ids.length < page.length) {
-        collected.addAll(page);
-        break;
-      }
-
-      collected.addAll(page);
-      final oldest = ids.reduce((a, b) => a < b ? a : b);
-      if (beforeId != null && oldest >= beforeId) break;
-      beforeId = oldest;
-      if (ids.length < _pageSize) break;
-    }
-    return collected;
   }
 
   /// Mengubah baris mentah server menjadi sampel yang bisa direkam.

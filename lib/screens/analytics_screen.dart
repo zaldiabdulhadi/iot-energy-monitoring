@@ -4,8 +4,11 @@ import 'package:provider/provider.dart';
 
 import '../models/energy_metric.dart';
 import '../models/energy_period_summary.dart';
+import '../providers/energy_data_provider.dart';
 import '../providers/energy_history_provider.dart';
+import '../services/energy_api_client.dart';
 import '../services/energy_csv_exporter.dart';
+import '../services/energy_raw_csv_exporter.dart';
 import '../theme/app_colors.dart';
 import '../widgets/insight_card.dart';
 import '../widgets/layout.dart';
@@ -24,6 +27,7 @@ class AnalyticsScreen extends StatefulWidget {
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
   EnergyMetric _chartMetric = EnergyMetric.power;
   bool _exporting = false;
+  bool _exportingRaw = false;
 
   /// Menulis riwayat periode terpilih ke Downloads lalu membuka lembar bagikan.
   ///
@@ -71,6 +75,77 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       );
     } finally {
       if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  /// Menulis seluruh sampel mentah dari server collector ke Downloads lalu
+  /// membuka lembar bagikan.
+  ///
+  /// Berbeda dari [_export] yang membaca riwayat di perangkat, ekspor ini
+  /// menarik langsung dari server, jadi server harus terjangkau saat tombol
+  /// ditekan dan berkasnya identik dengan `data.db` servernya.
+  Future<void> _exportRaw() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final endpoint = context.read<EnergyDataProvider>().endpoint;
+    if (endpoint == null) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Hubungkan dulu ke server ESP di menu Koneksi API ESP, lalu '
+            'coba unduh lagi.',
+          ),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    if (_exportingRaw) return;
+    setState(() => _exportingRaw = true);
+
+    final anchor = context.findRenderObject() as RenderBox?;
+    final origin = anchor == null || !anchor.hasSize
+        ? null
+        : (anchor.localToGlobal(Offset.zero) & anchor.size);
+
+    try {
+      final result =
+          await context.read<EnergyRawCsvExporter>().export(endpoint, origin: origin);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '${result.rowCount} sampel tersimpan di ${result.location}',
+          ),
+          backgroundColor: AppColors.success,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on EnergyExportException catch (error) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(error.message),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on EnergyApiException catch (error) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(error.message),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Gagal menyimpan berkas. Cek ruang penyimpanan.'),
+          backgroundColor: AppColors.critical,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _exportingRaw = false);
     }
   }
 
@@ -168,28 +243,34 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         _ExportCard(
           period: history.selectedPeriod,
           exporting: _exporting,
+          exportingRaw: _exportingRaw,
           onExport: () => _export(history.selectedPeriod),
+          onExportRaw: _exportRaw,
         ),
       ],
     );
   }
 }
 
-/// Mengunduh riwayat sebagai CSV satu baris per jam.
+/// Mengunduh riwayat sebagai CSV.
 ///
-/// Periode yang diunduh mengikuti tab yang sedang dipilih di atas, jadi angka
-/// di berkas sama dengan yang sedang dilihat pengguna dan tidak ada lagi
-/// pemilihan rentang yang harus diisi ulang.
+/// Dua pilihan: riwayat per jam periode terpilih (dari `hourly_history` di
+/// perangkat, jadi offline) dan sampel mentah langsung dari server collector
+/// (format sama persis dengan `server/export_csv.py`).
 class _ExportCard extends StatelessWidget {
   const _ExportCard({
     required this.period,
     required this.exporting,
+    required this.exportingRaw,
     required this.onExport,
+    required this.onExportRaw,
   });
 
   final HistoryPeriod period;
   final bool exporting;
+  final bool exportingRaw;
   final VoidCallback onExport;
+  final VoidCallback onExportRaw;
 
   @override
   Widget build(BuildContext context) {
@@ -233,6 +314,50 @@ class _ExportCard extends StatelessWidget {
                   : const Icon(Icons.ios_share_rounded, size: 18),
               label: Text(exporting ? 'Menyimpan…' : 'Unduh dan bagikan CSV'),
               style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                textStyle: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Sampel mentah dari server',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Satu baris per pengukuran ESP di server (kolom: id, waktu, '
+            'tegangan, arus, daya, energi, frekuensi, pf) — format sama '
+            'persis dengan `server/export_csv.py`. Butuh server terjangkau.',
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.45,
+              color: AppColors.textMuted,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: exportingRaw ? null : onExportRaw,
+              icon: exportingRaw
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.storage_rounded, size: 18),
+              label: Text(
+                exportingRaw ? 'Mengunduh…' : 'Unduh dan bagikan sampel mentah',
+              ),
+              style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 textStyle: const TextStyle(
                   fontSize: 13.5,

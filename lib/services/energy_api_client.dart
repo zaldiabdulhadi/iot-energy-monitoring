@@ -58,6 +58,55 @@ class EnergyApiClient {
     return decoded.whereType<Map<String, dynamic>>().toList();
   }
 
+  /// Menarik seluruh halaman riwayat mentah dari [endpoint] sampai habis.
+  ///
+  /// Dipakai bersama oleh backfill (agar baris lama masuk ke `hourly_history`)
+  /// dan oleh ekspor sampel mentah (agar berkas CSV berisi data yang sama
+  /// persis dengan `server/data.db`). Server mengembalikan `id` menurun, dan
+  /// paging berhenti begitu ada halaman kosong/pendek atau loop.
+  Future<List<Map<String, dynamic>>> fetchAllHistory(
+    Uri endpoint, {
+    int limit = 500,
+    int maxPages = 200,
+  }) async {
+    final collected = <Map<String, dynamic>>[];
+    int? beforeId;
+    var pages = 0;
+
+    while (pages < maxPages) {
+      final page = await fetchHistory(
+        endpoint,
+        beforeId: beforeId,
+        limit: limit,
+      );
+      pages += 1;
+      if (page.isEmpty) break;
+
+      // `id` menurun antar halaman. Kalau halaman terbaru tidak punya `id`,
+      // paging dihentikan saja supaya tidak berulang minta halaman yang sama.
+      final ids = page
+          .map((row) => row['id'])
+          .whereType<num>()
+          .map((id) => id.toInt())
+          .toList();
+      if (ids.isEmpty) {
+        collected.addAll(page);
+        break;
+      }
+      if (ids.length < page.length) {
+        collected.addAll(page);
+        break;
+      }
+
+      collected.addAll(page);
+      final oldest = ids.reduce((a, b) => a < b ? a : b);
+      if (beforeId != null && oldest >= beforeId) break;
+      beforeId = oldest;
+      if (ids.length < limit) break;
+    }
+    return collected;
+  }
+
   Future<http.Response> _get(Uri endpoint, {required Duration timeout}) async {
     if ((endpoint.scheme != 'http' && endpoint.scheme != 'https') ||
         endpoint.host.isEmpty) {

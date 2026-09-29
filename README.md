@@ -247,6 +247,28 @@ ke berkas CSV satu baris per jam, lalu membuka lembar bagikan.
 - Jam berpenanda `is_demo` ikut ditulis. Data simulasi tidak boleh hilang
   begitu saja dari berkas, tapi tidak boleh juga tercampur tanpa penanda.
 
+Kartu yang sama juga punya tombol **sampel mentah**: satu baris per pengukuran
+yang dikirim ESP ke server collector, dengan kolom
+`id;waktu;tegangan_v;arus_a;daya_w;energi_kwh;frekuensi_hz;pf`. Formatnya sama
+persis dengan `server/export_csv.py` (pemisah `;`, desimal koma, UTF-8 + BOM,
+NULL sebagai sel kosong). Berbeda dari riwayat per jam yang dibaca dari
+`hourly_history` di perangkat, sampel mentah ditarik langsung dari server saat
+tombol ditekan — jadi server harus terjangkau dan isinya identik dengan
+`data.db`.
+
+#### Mengubah `data.db` server menjadi CSV
+
+```
+python3 server/export_csv.py                 # -> server/pzem.csv
+python3 server/export_csv.py keluar.csv      # -> keluar.csv
+python3 server/export_csv.py --db db/x.db    # database lain
+```
+
+Skrip membaca tabel `pzem` secara read-only (aman dijalankan sementara server
+Flask hidup) dan menulis dengan format kanonik yang sama seperti tombol sampel
+mentah di aplikasi. `server/*.csv` tidak pernah di-commit karena berisi data
+pengukuran pribadi.
+
 ## Menjalankan
 
 ```bash

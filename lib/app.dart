@@ -16,6 +16,7 @@ import 'services/energy_history_backfill.dart';
 import 'services/energy_recorder.dart';
 import 'services/energy_sync_service.dart';
 import 'services/energy_api_client.dart';
+import 'services/energy_raw_csv_exporter.dart';
 import 'theme/app_theme.dart';
 
 class SmartEnergyApp extends StatelessWidget {
@@ -69,6 +70,12 @@ class SmartEnergyApp extends StatelessWidget {
         // berkas yang diunduh tidak pernah berbeda dari angka di layar.
         Provider<EnergyCsvExporter>(
           create: (_) => EnergyCsvExporter(database: database, history: history),
+        ),
+        // Ekspor sampel mentah menarik langsung dari server collector, jadi
+        // berkasnya identik dengan `server/data.db` saat diunduh. Endpoint
+        // diambil dari `EnergyDataProvider` saat tombol ditekan, bukan di sini.
+        Provider<EnergyRawCsvExporter>(
+          create: (_) => EnergyRawCsvExporter(apiClient: EnergyApiClient()),
         ),
         ChangeNotifierProvider(
           create: (_) {

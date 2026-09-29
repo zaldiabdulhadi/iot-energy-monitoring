@@ -274,4 +274,85 @@ void main() {
       );
     });
   });
+
+  group('fetchAllHistory', () {
+    Map<String, dynamic> row(int id) => {
+          'id': id,
+          'created_at': '2026-09-29T10:00:00',
+          'voltage': 214.0,
+          'current': 0.2,
+          'power': 35.0,
+          'energy': 0.17,
+          'frequency': 50.0,
+          'pf': 0.58,
+        };
+
+    EnergyApiClient clientServing(
+      List<List<Map<String, dynamic>>> pages, {
+      void Function(Uri url)? onRequest,
+    }) {
+      var call = 0;
+      return EnergyApiClient(
+        client: MockClient((request) async {
+          onRequest?.call(request.url);
+          final page = call < pages.length ? pages[call] : <Map<String, dynamic>>[];
+          call += 1;
+          return http.Response(jsonEncode(page), 200);
+        }),
+      );
+    }
+
+    test('menggabungkan seluruh halaman sampai halaman kosong', () async {
+      List<Map<String, dynamic>> page(int count, int startId) =>
+          List<Map<String, dynamic>>.generate(count, (i) => row(startId - i));
+      final seen = <Uri>[];
+      final apiClient = clientServing(
+        [page(500, 1000), page(500, 500), []],
+        onRequest: seen.add,
+      );
+      addTearDown(apiClient.close);
+
+      final rows = await apiClient.fetchAllHistory(
+        Uri.parse('http://server:5000/api/data?api_key=kunci'),
+      );
+
+      expect(rows, hasLength(1000));
+      expect(seen, hasLength(3));
+      expect(seen[0].queryParameters['before_id'], isNull);
+      expect(seen[1].queryParameters['before_id'], '501');
+      expect(seen[2].queryParameters['before_id'], '1');
+    });
+
+    test('halaman yang lebih pendek dari batas langsung mengakhiri paging',
+        () async {
+      final seen = <Uri>[];
+      final apiClient = clientServing(
+        [
+          List<Map<String, dynamic>>.generate(500, (i) => row(1000 - i)),
+          [row(500)],
+          [row(499)],
+        ],
+        onRequest: seen.add,
+      );
+      addTearDown(apiClient.close);
+
+      final rows = await apiClient.fetchAllHistory(
+        EnergyApiClient.defaultEndpoint,
+      );
+
+      expect(rows, hasLength(501));
+      expect(seen, hasLength(2));
+      expect(seen.last.queryParameters['before_id'], '501');
+    });
+
+    test('halaman kosong langsung berhenti tanpa error', () async {
+      final apiClient = clientServing([[]]);
+      addTearDown(apiClient.close);
+
+      final rows = await apiClient.fetchAllHistory(
+        EnergyApiClient.defaultEndpoint,
+      );
+      expect(rows, isEmpty);
+    });
+  });
 }

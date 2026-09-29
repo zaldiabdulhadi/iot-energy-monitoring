@@ -64,4 +64,7 @@ app.*.map.json
 # dibuat ulang otomatis oleh `init_db()` setiap server dijalankan.
 server/*.db
 server/*.db-journal
+# Hasil `server/export_csv.py` berisi data pengukuran pribadi yang sama dengan
+# `data.db`, jadi tidak pernah ikut ter-*commit*.
+server/*.csv
 
