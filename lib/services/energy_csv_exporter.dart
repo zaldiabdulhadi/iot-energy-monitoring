@@ -22,7 +22,7 @@ class EnergyCsvExport {
   final HistoryPeriod period;
   final String fileName;
 
-  /// Lokasi di perangkat, misalnya `Download/SmartEnergy/data-bulan.csv`.
+  /// Lokasi di perangkat, misalnya `Download/WattSerra/data-bulan.csv`.
   final String location;
 
   /// Jumlah jam yang ikut ditulis, bukan jumlah baris tabel.
@@ -93,7 +93,7 @@ class EnergyCsvExporter {
     await target.share(
       fileName,
       bytes,
-      subject: 'Rekap energi smart_energy',
+      subject: 'Rekap energi WattSerra',
       text: 'Rekam ${period.label.toLowerCase()} ${usable.length} jam, '
           'disimpan di $location',
       origin: origin,
@@ -113,7 +113,7 @@ class EnergyCsvExporter {
     String two(int value) => value.toString().padLeft(2, '0');
     final stamp =
         '${to.year}${two(to.month)}${two(to.day)}-${two(to.hour)}${two(to.minute)}';
-    return 'smart-energy_${period.name}_$stamp.csv';
+    return 'watt-serra_${period.name}_$stamp.csv';
   }
 }
 

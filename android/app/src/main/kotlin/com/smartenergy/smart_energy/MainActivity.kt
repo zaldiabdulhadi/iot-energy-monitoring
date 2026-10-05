@@ -57,7 +57,7 @@ class MainActivity : FlutterActivity() {
                 put(MediaStore.Downloads.MIME_TYPE, "text/csv")
                 put(
                     MediaStore.Downloads.RELATIVE_PATH,
-                    "${Environment.DIRECTORY_DOWNLOADS}/SmartEnergy",
+                    "${Environment.DIRECTORY_DOWNLOADS}/WattSerra",
                 )
                 // Pending mencegah berkas setengah jadi muncul di Downloads.
                 put(MediaStore.Downloads.IS_PENDING, 1)
@@ -71,7 +71,7 @@ class MainActivity : FlutterActivity() {
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
 
-            return "Download/SmartEnergy/$fileName"
+            return "Download/WattSerra/$fileName"
         }
 
         val directory = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir

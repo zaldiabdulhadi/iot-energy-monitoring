@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/energy_metric.dart';
 import '../theme/app_colors.dart';
+import '../widgets/app_wordmark.dart';
 import '../widgets/layout.dart';
 import '../widgets/onboarding_slide.dart';
 
@@ -66,8 +67,6 @@ class _AppSplashLogoState extends State<AppSplashLogo>
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-
     return Scaffold(
       body: DecoratedBox(
         decoration: const BoxDecoration(
@@ -91,38 +90,10 @@ class _AppSplashLogoState extends State<AppSplashLogo>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Bentuk logo disamakan dengan blok logo di kartu
-                      // Profil supaya identitas aplikasi sama sejak layar pertama.
-                      Container(
-                        width: 92,
-                        height: 92,
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryDark,
-                          borderRadius: BorderRadius.circular(30),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.primaryDark
-                                  .withValues(alpha: 0.28),
-                              blurRadius: 24,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.bolt_rounded,
-                          size: 50,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        'Smart Energy',
-                        style: textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.deepGreen,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
+                      // Wordmark yang sama dipakai di kartu Profil supaya
+                      // identitas aplikasi tidak berubah sejak layar pertama.
+                      const AppWordmark(width: 232),
+                      const SizedBox(height: 18),
                       const Text(
                         'Pemantau listrik ESP',
                         style: TextStyle(
@@ -174,7 +145,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       icon: Icons.bolt_rounded,
       tint: AppColors.primaryDark,
       title: 'Enam metrik, satu layar',
-      body: 'Smart Energy membaca meter PZEM-004T lewat ESP setiap lima '
+      body: 'WattSerra membaca meter PZEM-004T lewat ESP setiap lima '
           'detik. Enam metrik yang benar-benar dikirim meter ditampilkan apa '
           'adanya, lengkap dengan penanda bila keluar dari rentang sehat.',
       chips: [

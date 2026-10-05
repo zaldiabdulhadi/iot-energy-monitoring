@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'app_colors.dart';
 
-/// Central theme for the Smart Energy app.
+/// Central theme for the WattSerra app.
 ///
 /// White-first design, Poppins typography and pastel green identity.
 class AppTheme {

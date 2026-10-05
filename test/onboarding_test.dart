@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_energy/app.dart';
 import 'package:smart_energy/data/local/app_database.dart';
 import 'package:smart_energy/screens/onboarding_screen.dart';
+import 'package:smart_energy/widgets/app_wordmark.dart';
 
 /// Lebar layar yang harus aman, sama seperti `layout_test.dart`.
 const _widths = <String, double>{
@@ -56,7 +57,7 @@ void main() {
     await pumpIntro(tester);
 
     expect(find.byType(AppSplashLogo), findsOneWidget);
-    expect(find.text('Smart Energy'), findsOneWidget);
+    expect(find.byType(AppWordmark), findsOneWidget);
     // Tombol halaman instruksi belum boleh ada: kalau dibangun bersamaan
     // dengan logo, "Lewati" bisa ditekan saat belum ada yang boleh dibaca.
     expect(find.text('Lewati'), findsNothing);

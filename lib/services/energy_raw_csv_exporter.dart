@@ -18,7 +18,7 @@ class EnergyRawCsvExport {
 
   final String fileName;
 
-  /// Lokasi di perangkat, misalnya `Download/SmartEnergy/pzem-20260929-1502.csv`.
+  /// Lokasi di perangkat, misalnya `Download/WattSerra/pzem-20260929-1502.csv`.
   final String location;
 
   /// Jumlah sampel yang ikut ditulis, sama dengan jumlah baris di server.
@@ -69,7 +69,7 @@ class EnergyRawCsvExporter {
     await target.share(
       fileName,
       bytes,
-      subject: 'Sampel mentah smart_energy',
+      subject: 'Sampel mentah WattSerra',
       text: 'Unduh ${sorted.length} sampel, disimpan di $location',
       origin: origin,
     );

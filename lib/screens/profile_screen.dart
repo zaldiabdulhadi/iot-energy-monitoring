@@ -8,6 +8,7 @@ import '../providers/energy_history_provider.dart';
 import '../providers/sync_status_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_wordmark.dart';
 import '../widgets/layout.dart';
 import '../widgets/metric_tile.dart';
 import '../widgets/status_pill.dart';
@@ -115,7 +116,7 @@ class ProfileScreen extends StatelessWidget {
               ),
               _SettingTile(
                 icon: Icons.info_outline_rounded,
-                label: 'Tentang Smart Energy',
+                label: 'Tentang WattSerra',
                 subtitle: 'v1.0.0 · aplikasi pemantau listrik ESP',
               ),
             ],
@@ -147,33 +148,12 @@ class ProfileScreen extends StatelessWidget {
         children: [
           Row(
             children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryDark,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  Icons.bolt_rounded,
-                  size: 30,
-                  color: Colors.white,
-                ),
-              ),
+              const AppWordmark(width: 118),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Smart Energy',
-                      style: textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.deepGreen,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
                     Text(
                       'Pemantau listrik ESP',
                       style: textTheme.bodySmall?.copyWith(

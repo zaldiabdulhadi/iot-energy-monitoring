@@ -1,4 +1,4 @@
--- Policy RLS untuk aplikasi IoT Smart Energy.
+-- Policy RLS untuk aplikasi WattSerra.
 --
 -- BERKAS INI ADALAH TEMPLAT. Salin ke `enable_rls_policies.sql` (tanpa
 -- `.example`), ganti nilai rahasia di bawah, lalu jalankan salinannya lewat

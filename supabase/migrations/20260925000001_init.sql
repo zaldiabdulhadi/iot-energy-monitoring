@@ -1,4 +1,4 @@
--- Skema backend cloud untuk aplikasi IoT Smart Energy.
+-- Skema backend cloud untuk aplikasi WattSerra.
 --
 -- Cerminan 1:1 dari tabel Drift lokal (`local_devices` dan `hourly_queue`),
 -- kecuali kolom *sync bookkeeping* (sync_state, attempts, last_error, synced_at)

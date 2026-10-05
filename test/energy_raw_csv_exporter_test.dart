@@ -21,7 +21,7 @@ class _FakeTarget implements EnergyExportTarget {
   Future<String> saveToDownloads(String fileName, Uint8List bytes) async {
     savedNames.add(fileName);
     lastBytes = bytes;
-    return 'Download/SmartEnergy/$fileName';
+    return 'Download/WattSerra/$fileName';
   }
 
   @override

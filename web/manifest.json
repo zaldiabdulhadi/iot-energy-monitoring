@@ -1,11 +1,11 @@
 {
-    "name": "smart_energy",
-    "short_name": "smart_energy",
+    "name": "WattSerra",
+    "short_name": "WattSerra",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#4F9D69",
+    "theme_color": "#4F9D69",
+    "description": "WattSerra — pemantau listrik ESP untuk rumah.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

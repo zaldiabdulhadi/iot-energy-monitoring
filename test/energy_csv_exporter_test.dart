@@ -22,7 +22,7 @@ class _FakeTarget implements EnergyExportTarget {
   Future<String> saveToDownloads(String fileName, Uint8List bytes) async {
     savedNames.add(fileName);
     lastBytes = bytes;
-    return 'Download/SmartEnergy/$fileName';
+    return 'Download/WattSerra/$fileName';
   }
 
   @override
@@ -193,8 +193,8 @@ void main() {
       expect(result.rowCount, 2);
       expect(result.from, DateTime(2026, 3, 14, 13));
       expect(result.to, DateTime(2026, 3, 15, 13));
-      expect(result.fileName, 'smart-energy_day_20260315-1300.csv');
-      expect(result.location, contains('smart-energy_day_20260315-1300.csv'));
+      expect(result.fileName, 'watt-serra_day_20260315-1300.csv');
+      expect(result.location, contains('watt-serra_day_20260315-1300.csv'));
 
       expect(target.savedNames, <String>[result.fileName]);
       expect(target.sharedNames, <String>[result.fileName]);
@@ -222,15 +222,15 @@ void main() {
       // di batas jam, "Minggu" dan "Bulan" di tengah malam.
       expect(
         (await exporter.export(HistoryPeriod.day, now: now)).fileName,
-        'smart-energy_day_20260315-1300.csv',
+        'watt-serra_day_20260315-1300.csv',
       );
       expect(
         (await exporter.export(HistoryPeriod.week, now: now)).fileName,
-        'smart-energy_week_20260316-0000.csv',
+        'watt-serra_week_20260316-0000.csv',
       );
       expect(
         (await exporter.export(HistoryPeriod.month, now: now)).fileName,
-        'smart-energy_month_20260316-0000.csv',
+        'watt-serra_month_20260316-0000.csv',
       );
     });
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Warna layar pembuka, sama dengan AppColors.primaryLight. -->
+    <color name="splash_background">#E8F6EB</color>
+    <color name="ic_launcher_background">#4F9D69</color>
+</resources>

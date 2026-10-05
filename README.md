@@ -1,4 +1,4 @@
-# IoT Smart Energy Monitoring
+# WattSerra — IoT Smart Energy Monitoring
 
 Aplikasi Flutter untuk memantau konsumsi listrik dari mikrokontroler ESP (PZEM-004T)
 melalui API HTTP, menyimpannya secara lokal, lalu menyinkronkannya ke Supabase.
@@ -238,7 +238,7 @@ ke berkas CSV satu baris per jam, lalu membuka lembar bagikan.
 - Pemisah kolom `;` dan desimal `,`, jadi berkas langsung tampil benar saat
   dibuka di Excel versi Indonesia tanpa wizard impor. Untuk Python/Sheets,
   gunakan `sep=';'`.
-- Penyalinan ke folder `Download/SmartEnergy` lewat `MediaStore` di kanal
+- Penyalinan ke folder `Download/WattSerra` lewat `MediaStore` di kanal
   `com.smartenergy.smart_energy/downloads` (lihat `MainActivity.kt`), jadi tidak
   ada permintaan izin penyimpanan. Android 9 ke bawah, yang belum punya
   `MediaStore.Downloads`, jatuh ke folder unduhan milik aplikasi.

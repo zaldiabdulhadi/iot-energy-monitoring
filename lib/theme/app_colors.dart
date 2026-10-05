@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Smart Energy color palette.
+/// WattSerra color palette.
 class AppColors {
   AppColors._();
 
