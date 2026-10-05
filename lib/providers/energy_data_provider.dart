@@ -9,10 +9,27 @@ import '../models/energy_reading.dart';
 import '../services/energy_api_client.dart';
 import '../services/energy_history_backfill.dart';
 import '../services/energy_recorder.dart';
+import '../services/energy_server_discovery.dart';
 import '../services/recommendation_engine.dart';
 import 'history_invalidator.dart';
 
 enum DataSource { demo, api }
+
+/// Status impor riwayat dari server collector.
+enum HistoryImportState {
+  /// Belum pernah ada impor, atau ada yang gagal lalu sudah dicoba ulang.
+  idle,
+
+  /// Sedang berjalan sekarang.
+  running,
+
+  /// Impor terakhir selesai dan menulis riwayat.
+  done,
+
+  /// Impor terakhir gagal. Error tersimpan di
+  /// [EnergyDataProvider.importError] dan bisa dicoba ulang.
+  failed,
+}
 
 /// Sumber status realtime dari ESP.
 ///
@@ -27,18 +44,31 @@ class EnergyDataProvider extends ChangeNotifier {
     this.database,
     this.historyInvalidator,
     this.backfill,
+    this.discovery,
+    this.discoveryCooldown = const Duration(minutes: 2),
   }) : _apiClient = apiClient ?? EnergyApiClient();
 
   final EnergyApiClient _apiClient;
   final EnergyRecorder? recorder;
   final Duration pollInterval;
 
-  /// Penarik riwayat lama dari server collector, dijalankan sekali setelah
-  /// koneksi pertama berhasil.
+  /// Penarik riwayat lama dari server collector.
   ///
   /// Disuntikkan supaya bisa diganti objek palsu di test, dan supaya tab yang
   /// tidak butuh impor tidak membayar biaya paging-nya.
   final EnergyHistoryBackfill? backfill;
+
+  /// Pencari collector di jaringan lokal, untuk penyambungan tanpa input.
+  ///
+  /// Null mematikan pencarian, dan itu yang dipakai test yang menguji percobaan
+  /// ulang: tanpa itu, setiap panggilan [connect] akan menyapu 254 host.
+  final EnergyServerDiscovery? discovery;
+
+  /// Berapa lama pencarian baru diizinkan setelah penyapuan yang gagal.
+  ///
+  /// Tanpa jeda ini, [pollInterval] yang lima detik akan membuat aplikasi
+  /// menembak 254 host berulang selama server mati.
+  final Duration discoveryCooldown;
 
   /// Sumber endpoint tersimpan untuk [autoConnect].
   ///
@@ -61,19 +91,76 @@ class EnergyDataProvider extends ChangeNotifier {
   Timer? _retryTimer;
   bool _pollInFlight = false;
 
-  /// Impor riwayat hanya jalan sekali per aplikasi, bukan setiap polling.
+  /// Impor riwayat hanya dicoba otomatis sekali per aplikasi, lewat [connect].
   ///
-  /// Dicoba dari [connect] saja, bukan dari [_poll]: `_poll` berjalan tiap lima
+  /// Dicoba dari `connect` saja, bukan dari `_poll`: `_poll` berjalan tiap lima
   /// detik, jadi impor di sana akan mengulang paging seluruh riwayat server
-  /// terus-menerus. [connect] sendiri juga dipanggil ulang oleh [_startRetry],
-  /// jadi [_importHistory] yang memeriksa [_historyImported].
+  /// terus-menerus. [importHistoryNow] sengaja tidak mengeceknya, karena
+  /// tombol manual harus bisa mengulang proses yang sama.
   bool _historyImported = false;
+
+  /// Menjaga agar tidak ada dua impor yang berjalan bersamaan.
+  ///
+  /// Impor manual bisa ditekan saat impor otomatis masih jalan, dan keduanya
+  /// menulis ke `minute_aggregates` dengan kunci yang sama.
+  bool _importInFlight = false;
+
+  HistoryImportState _importState = HistoryImportState.idle;
+  BackfillProgress? _importProgress;
+  String? _importError;
+  DateTime? _lastImportAt;
+  BackfillResult? _lastImportResult;
+
+  /// Status impor terakhir, untuk ditampilkan di tab Analisis.
+  HistoryImportState get importState => _importState;
+
+  /// Kemajuan impor yang sedang berjalan, null kalau tidak ada yang jalan.
+  BackfillProgress? get importProgress => _importProgress;
+
+  /// Alasan impor terakhir gagal.
+  ///
+  /// Null ketika impor terakhir berhasil atau belum pernah dicoba. Isinya pesan
+  /// asli dari server, bukan teks generik, supaya pengguna tahu apakah masalahnya
+  /// 404, koneksi, atau JSON yang rusak.
+  String? get importError => _importError;
+
+  /// Kapan impor terakhir yang berhasil selesai.
+  DateTime? get lastImportAt => _lastImportAt;
+
+  /// Ringkasan impor terakhir yang berhasil.
+  BackfillResult? get lastImportResult => _lastImportResult;
+
+  /// True selama penyapuan jaringan sedang berjalan.
+  ///
+  /// Dipakai UI supaya "Mencari collector di jaringan…" tidak salah tampil
+  /// sebagai "Mode demo aktif" keadaannya.
+  bool get discovering => _discovering;
+  bool _discovering = false;
+
+  /// Batas bawah kapan penyapuan berikutnya boleh jalan.
+  DateTime? _discoveryAllowedAfter;
 
   /// True selama percobaan otomatis masih diizinkan.
   ///
   /// Dipakai [disconnect] untuk membatalkan retry, supaya tombol "Putuskan
   /// Koneksi" tidak langsung ditimpa percobaan berikutnya.
   bool _autoConnectRequested = false;
+
+  /// Berapa kali alamat yang tersimpan gagal sebelum dianggap tidak berlaku.
+  ///
+  /// DHCP sering memindahkan collector ke IP lain setelah server hidup
+  /// semalaman. Kalau retry hanya menembak alamat lama selamanya, aplikasi
+  /// tidak akan pernah pulih tanpa uninstall: alamat yang benar sudah ada,
+  /// hanya tidak lagi diketahui.
+  static const _failuresBeforeRescan = 2;
+  int _knownEndpointFailures = 0;
+
+  /// True kalau alamat aktif diketik pengguna, bukan hasil penyapuan.
+  ///
+  /// Alamat hasil discovery boleh dibuang lalu dicari ulang sendiri. Alamat
+  /// yang diketik pengguna tidak: kalau salah itu kesalahan yang harus
+  /// diperbaiki di layar pengaturan, bukan sesuatu yang hilang diam-diam.
+  bool _endpointIsManual = false;
 
   /// Dipakai untuk menahan notifyListeners setelah dispose(), karena permintaan
   /// yang sudah berjalan tidak ikut terhenti oleh pembatalan timer.
@@ -205,6 +292,10 @@ class EnergyDataProvider extends ChangeNotifier {
   /// percobaan diulang tiap [pollInterval] sampai berhasil, atau sampai
   /// pengguna memutus koneksi secara manual. Tanpa endpoint tersimpan aplikasi
   /// tetap di mode demo, sama seperti sebelumnya.
+  ///
+  /// Kalau endpoint belum pernah disimpan, aplikasi mencari collector di
+  /// jaringan sendiri lewat [discoverAndConnect], jadi pengaturan awal tidak
+  /// perlu URL dan api_key sama sekali.
   Future<void> autoConnect() async {
     final database = this.database;
     if (database == null || _disposed) return;
@@ -212,11 +303,66 @@ class EnergyDataProvider extends ChangeNotifier {
     final device =
         await (database.select(database.localDevices)).getSingleOrNull();
     final saved = parseEndpoint(device?.endpoint);
-    if (saved == null) return;
 
     _autoConnectRequested = true;
     if (_disposed) return;
-    await connect(endpoint: saved);
+
+    // Endpoint tersimpan dicoba lebih dulu: ini jalur tercepat dan paling
+    // sering terjadi, karena sekali ditemukan alamatnya sudah disimpan untuk
+    // launch berikutnya dan penyapuan tidak perlu jalan lagi.
+    if (saved != null) {
+      await connect(endpoint: saved);
+      return;
+    }
+    await discoverAndConnect();
+  }
+
+  /// Mencari collector di jaringan lokal lalu menyambungkannya.
+  ///
+  /// Alamat yang ketemu langsung ditulis ke `local_devices.endpoint`, jadi
+  /// pemanggilan berikutnya cukup jatuh ke [autoConnect] tanpa penyapuan. Kalau
+  /// tidak ketemu, penyapuan berikutnya ditahan sampai [_discoveryCooldown]
+  /// habis supaya percobaan ulang lima detik tidak jadi 254 request per menit.
+  ///
+  /// Dipisah dari [autoConnect] supaya bisa dipanggil dari UI tanpa mengubah
+  /// endpoint yang tersimpan, yaitu untuk mencoba ulang secara sadar.
+  Future<void> discoverAndConnect({bool force = false}) async {
+    final database = this.database;
+    final service = discovery;
+    if (database == null || service == null || _disposed) return;
+    if (_discovering || _connected) return;
+
+    final now = DateTime.now();
+    if (!force) {
+      final allowedAfter = _discoveryAllowedAfter;
+      if (allowedAfter != null && now.isBefore(allowedAfter)) return;
+    }
+
+    _discovering = true;
+    notifyListeners();
+    try {
+      final found = await service.discover();
+      if (_disposed) return;
+
+      if (found == null) {
+        _discoveryAllowedAfter = now.add(discoveryCooldown);
+        // Error aplikasi dibiarkan apa adanya supaya pesan "Mode demo aktif"
+        // tetap jujur: yang gagal adalah menemukan collector, bukan koneksi
+        // ke endpoint yang sudah diketahui.
+        return;
+      }
+
+      _discoveryAllowedAfter = null;
+      await database.updateLocalDevice(
+        localId: (await database.ensureLocalDevice()).localId,
+        endpoint: found.endpoint.toString(),
+      );
+      if (_disposed) return;
+      await connect(endpoint: found.endpoint);
+    } finally {
+      _discovering = false;
+      if (!_disposed) notifyListeners();
+    }
   }
 
   /// Menerjemahkan teks endpoint menjadi [Uri] yang bisa dipakai.
@@ -241,8 +387,36 @@ class EnergyDataProvider extends ChangeNotifier {
     _retryTimer ??= Timer.periodic(pollInterval, (_) {
       if (!_autoConnectRequested || _disposed) return;
       if (_connecting || _source == DataSource.api) return;
-      unawaited(connect());
+      // Endpoint yang sudah diketahui dicoba langsung; itu satu request dan
+      // mencakup kasus yang paling sering, yaitu server hidup tapi sedang
+      //restart. Kalau tidak ada endpoint sama sekali, jalurnya adalah penyapuan
+      // jaringan, dan itu sudah dijaga [_discoveryAllowedAfter] di dalam
+      // [discoverAndConnect] supaya tidak mengulang 254 host tiap lima detik.
+      if (_endpoint != null) {
+        final attempted = _endpoint;
+        unawaited(connect().then((_) => _noteKnownEndpointResult(attempted)));
+        return;
+      }
+      unawaited(discoverAndConnect());
     });
+  }
+
+  /// Menandai hasil percobaan ke alamat yang sudah diketahui.
+  ///
+  /// Setelah [_failuresBeforeRescan] kegagalan berturut-turut, alamat lama
+  /// dibuang supaya [_startRetry] jatuh ke jalur penyapuan pada tick
+  /// berikutnya. Nilai di database sengaja tidak disentuh, jadi [autoConnect]
+  /// masih sempat mencoba sekali lagi sebelum menyimpang ke discovery.
+  void _noteKnownEndpointResult(Uri? attempted) {
+    if (_disposed || attempted == null) return;
+    if (_connected) return;
+    if (_endpointIsManual || _endpoint != attempted) return;
+
+    _knownEndpointFailures++;
+    if (_knownEndpointFailures >= _failuresBeforeRescan) {
+      _endpoint = null;
+      _knownEndpointFailures = 0;
+    }
   }
 
   void _stopRetry() {
@@ -250,7 +424,7 @@ class EnergyDataProvider extends ChangeNotifier {
     _retryTimer = null;
   }
 
-  Future<void> connect({Uri? endpoint}) async {
+  Future<void> connect({Uri? endpoint, bool manual = false}) async {
     if (_connecting) return;
 
     final target = endpoint ?? _endpoint ?? EnergyApiClient.defaultEndpoint;
@@ -261,6 +435,7 @@ class EnergyDataProvider extends ChangeNotifier {
     _connecting = true;
     _error = null;
     _endpoint = target;
+    _endpointIsManual = manual;
     notifyListeners();
 
     try {
@@ -268,6 +443,7 @@ class EnergyDataProvider extends ChangeNotifier {
       _source = DataSource.api;
       _applyReading(reading);
       _connected = true;
+      _knownEndpointFailures = 0;
       _connectedEndpoint = target;
       _connectedSince = DateTime.now();
       _demoTimer?.cancel();
@@ -339,30 +515,124 @@ class EnergyDataProvider extends ChangeNotifier {
     unawaited(recorder?.record(reading, now: _lastUpdated, isDemo: false));
   }
 
-  /// Menarik riwayat yang sudah ada di server ke `hourly_history`.
+/// Menarik riwayat yang sudah ada di server ke `hourly_history`.
   ///
-  /// Prosesnya murni tambahan, jadi kegagalan apa pun di sini dibiarkan
-  /// diam-diam: pencatatan live tidak boleh terganggu karena server lambat atau
-  /// karena belum ada riwayat. Bendera penanda ditandai di awal, bukan di akhir,
-  /// supaya percobaan berikutnya setelah gagal tidak mengulang paging yang sama
-  /// setiap lima detik.
+  /// Prosesnya murni tambahan, jadi kegagalan apa pun di sini tidak boleh
+  /// mengganggu pencatatan live. Error dicatat di [importError] supaya terbaca
+  /// di tab Analisis, dan pembaca riwayat tetap diberi tahu setelah berhasil
+  /// supaya tab itu ikut memuat ulang.
+  ///
+  /// Dipanggil otomatis sekali setelah koneksi pertama berhasil, dan bisa
+  /// dipanggil ulang kapan saja lewat [importHistoryNow].
   Future<void> _importHistory(Uri endpoint) async {
-    if (_historyImported) return;
+    if (_historyImported || _importInFlight) return;
     _historyImported = true;
+    await importHistoryNow(endpoint: endpoint);
+  }
+
+  /// Menjalankan impor riwayat server sekarang juga.
+  ///
+  /// Berbeda dari [_importHistory], method ini tidak mengecek
+  /// [_historyImported], jadi tombol di tab Analisis selalu bisa mengulang
+  /// proses yang sama. Aman dijalankan berkali-kali: `upsertMinute` dan
+  /// `upsertHistory` sama-sama menimpa baris dengan kunci yang sama, jadi impor
+  /// kedua menghasilkan angka yang sama persis dan bukan penjumlahan.
+  ///
+  /// [endpoint] dipakai eksplisit oleh panggilan otomatis. Tanpa itu, endpoint
+  /// yang sedang terhubung dipakai, dan tanpa itu juga tombol di UI yang
+  /// memanggil. Nilai balik melaporkan hasil akhirnya, sementara kegagalan
+  /// dicatat di [importError] dan tidak dilempar supaya pemanggil UI tidak
+  /// harus menangkap exception yang sama.
+  Future<BackfillResult?> importHistoryNow({Uri? endpoint}) async {
     final service = backfill;
-    if (service == null) return;
+    if (service == null) return null;
+    if (_importInFlight) return null;
+
+    final target = endpoint ?? _connectedEndpoint ?? _endpoint;
+    if (target == null) {
+      _importState = HistoryImportState.failed;
+      _importError = 'Belum ada server yang terhubung.';
+      notifyListeners();
+      return null;
+    }
+
+    _importInFlight = true;
+    _importState = HistoryImportState.running;
+    _importError = null;
+    _importProgress = const BackfillProgress(phase: BackfillPhase.fetching);
+    notifyListeners();
 
     try {
-      final result = await service.run(endpoint);
-      if (result.isEmpty || _disposed) return;
-      // Kabar dua pembaca riwayat supaya tab Analisis ikut memuat ulang.
+      final result = await service.run(
+        target,
+        onProgress: (progress) {
+          _importProgress = progress;
+          // Diperbarui ke layar hanya saat tahap berganti atau tiap sepuluh
+          // persen, bukan tiap sampel. 11.400 sampel kalau semuanya dilaporkan
+          // berarti 11.400 rebuild, sementara yang berubah di layar cuma angka
+          // persen dan tahapnya.
+          final fraction = progress.fraction;
+          final phaseChanged = progress.phase != _lastReportedPhase;
+          _lastReportedPhase = progress.phase;
+          if (phaseChanged ||
+              fraction != null &&
+                  (_lastReportedFraction == null ||
+                      (fraction - _lastReportedFraction!).abs() >= 0.1)) {
+            _lastReportedFraction = fraction;
+            if (!_disposed) notifyListeners();
+          }
+        },
+      );
+
+      if (_disposed) return result;
+
+      _importProgress = null;
+      _lastReportedFraction = null;
+      if (result.isEmpty) {
+        _importState = HistoryImportState.done;
+        _lastImportResult = result;
+        _lastImportAt = DateTime.now();
+        return result;
+      }
+
+      _importState = HistoryImportState.done;
+      _lastImportResult = result;
+      _lastImportAt = DateTime.now();
+      // Kabar pembaca riwayat supaya tab Analisis ikut memuat ulang.
       historyInvalidator?.invalidate();
-    } on EnergyApiException {
-      return;
+      return result;
+    } on EnergyApiException catch (error) {
+      if (!_disposed) {
+        _importState = HistoryImportState.failed;
+        _importError = error.message;
+        _importProgress = null;
+        notifyListeners();
+      }
+      return null;
     } catch (error) {
-      debugPrint('Impor riwayat server gagal: $error');
+      if (!_disposed) {
+        _importState = HistoryImportState.failed;
+        _importError = 'Gagal mengimpor riwayat: $error';
+        _importProgress = null;
+        debugPrint('Impor riwayat server gagal: $error');
+        notifyListeners();
+      }
+      return null;
+    } finally {
+      _importInFlight = false;
     }
   }
+
+  /// Persentase terakhir yang sudah dilaporkan ke UI.
+  ///
+  /// Disimpan sebagai angka, bukan dengan menghitung rebuild, supaya
+  /// `notifyListeners` yang mahal itu hanya terpanggil saat memang ada yang
+  /// berubah di layar.
+  double? _lastReportedFraction;
+
+/// Tahap terakhir yang dilaporkan, supaya perpindahan `fetching` ke
+  /// `importing` selalu membangun ulang meski persentasenya kebetulan sama.
+  BackfillPhase? _lastReportedPhase;
 
   Future<void> persistPendingHistory() async {
     await recorder?.flush();
@@ -426,8 +696,14 @@ class EnergyDataProvider extends ChangeNotifier {
 
     if (endpoint != null) {
       _autoConnectRequested = true;
-      await connect(endpoint: endpoint);
+      await connect(endpoint: endpoint, manual: true);
+      return;
     }
+    // Endpoint dikosongkan karena pengguna tidak punya URL manual. Daripada
+    // berhenti di mode demo, cari collector di jaringan supaya tombol "Ganti
+    // perangkat" tanpa URL berperilaku sama seperti pemasangan pertama.
+    _autoConnectRequested = true;
+    await discoverAndConnect(force: true);
   }
 
   /// Menghapus seluruh riwayat pengukuran perangkat yang sedang aktif.

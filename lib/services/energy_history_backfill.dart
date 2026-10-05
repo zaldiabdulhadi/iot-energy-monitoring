@@ -4,6 +4,39 @@ import '../utils/bucket_time.dart';
 import 'energy_api_client.dart';
 import 'energy_recorder.dart';
 
+/// Tahap mana importer sedang berada.
+enum BackfillPhase {
+  /// Menarik halaman mentah dari server. Jumlah akhirnya belum diketahui,
+  /// jadi yang bisa ditampilkan cuma halaman ke berapa.
+  fetching,
+
+  /// Menulis sampel yang sudah ditarik ke tabel per menit lalu per jam.
+  /// Di tahap ini jumlah akhirnya sudah diketahui.
+  importing,
+}
+
+/// Kemajuan satu kali impor riwayat.
+class BackfillProgress {
+  const BackfillProgress({required this.phase, this.samples = 0, this.total});
+
+  final BackfillPhase phase;
+
+  /// Pada [BackfillPhase.fetching] ini jumlah baris yang sudah terkumpul,
+  /// pada [BackfillPhase.importing] jumlah sampel yang sudah ditulis.
+  final int samples;
+
+  /// Total akhir, hanya terisi pada [BackfillPhase.importing].
+  final int? total;
+
+  /// Persentase yang bisa dipakai langsung oleh indikator kemajuan.
+  ///
+  /// Null saat total belum diketahui, jadi widget harus menampilkan
+  /// indeterminate bar dan bukan mengisi angka nol yang terlihat selesai.
+  double? get fraction => total == null || total! <= 0
+      ? null
+      : (samples / total!).clamp(0.0, 1.0);
+}
+
 /// Menarik riwayat yang sudah terkumpul di server collector ke database lokal.
 ///
 /// Server Flask menyimpan sampel mentah tiap beberapa detik, sementara tab
@@ -31,10 +64,25 @@ class EnergyHistoryBackfill {
   /// Hanya jam yang sudah lewat yang disentuh. Jam berjalan masih ditulis
   /// oleh recorder live, dan menimpanya dengan hasil impor akan membuat angka
   /// yang sedang tampil meloncat turun.
-  Future<BackfillResult> run(Uri endpoint, {DateTime? now}) async {
+  ///
+  /// [onProgress] dipanggil sepanjang proses supaya layar bisa menampilkan
+  /// kemajuan. Enam ribu sampai sebelas ribu sampel diproses satu per satu
+  /// lewat [EnergyRecorder], jadi tanpa laporan ini prosesnya terlihat macet.
+  Future<BackfillResult> run(
+    Uri endpoint, {
+    DateTime? now,
+    void Function(BackfillProgress progress)? onProgress,
+  }) async {
     final timestamp = now ?? DateTime.now();
     final cutoff = floorToHour(timestamp);
-    final rows = await apiClient.fetchAllHistory(endpoint);
+
+    onProgress?.call(const BackfillProgress(phase: BackfillPhase.fetching));
+    final rows = await apiClient.fetchAllHistory(
+      endpoint,
+      onPage: (page, collected) => onProgress?.call(
+        BackfillProgress(phase: BackfillPhase.fetching, samples: collected),
+      ),
+    );
     if (rows.isEmpty) return const BackfillResult(samples: 0, hours: 0);
 
     final samples = _parse(rows, cutoff);
@@ -49,12 +97,32 @@ class EnergyHistoryBackfill {
       pollInterval: pollInterval,
     );
 
-    for (final sample in samples) {
+    onProgress?.call(
+      BackfillProgress(
+        phase: BackfillPhase.importing,
+        samples: 0,
+        total: samples.length,
+      ),
+    );
+    for (var index = 0; index < samples.length; index++) {
+      final sample = samples[index];
       await recorder.record(
         sample.reading,
         now: sample.at,
         isDemo: false,
       );
+      // Dilaporkan tiap sampel ke-50, bukan tiap sampel. Memanggil
+      // `notifyListeners` sebelas ribu kali akan membuat seluruh UI ikut
+      // rebuild, sementara langkah 50 membuat bilah tetap bergerak jelas.
+      if (index % 50 == 49 || index == samples.length - 1) {
+        onProgress?.call(
+          BackfillProgress(
+            phase: BackfillPhase.importing,
+            samples: index + 1,
+            total: samples.length,
+          ),
+        );
+      }
     }
     await recorder.flush();
     await recorder.closeCompletedHours(now: timestamp);

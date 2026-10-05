@@ -27,7 +27,7 @@ Future<void> _disposeApp(WidgetTester tester) async {
 Finder get _contentList => find.byType(Scrollable).last;
 
 void main() {
-  testWidgets('Smart Energy app renders dashboard', (tester) async {
+  testWidgets('WattSerra app renders dashboard', (tester) async {
     await _pumpApp(tester);
 
     expect(find.text('Dashboard'), findsOneWidget);
@@ -72,7 +72,9 @@ void main() {
     );
     expect(find.text('Mode demo aktif'), findsOneWidget);
 
-    final section = find.text('Konfigurasi API');
+    // Judul bagian sudah diubah jadi "Pengaturan lanjutan (opsional)": endpoint
+    // dan api_key bukan lagi bagian yang harus diisi.
+    final section = find.text('Pengaturan lanjutan (opsional)');
     await tester.scrollUntilVisible(section, 200, scrollable: _contentList);
     await tester.pump(const Duration(milliseconds: 400));
 

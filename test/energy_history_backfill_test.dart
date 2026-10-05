@@ -353,4 +353,150 @@ void main() {
     expect(reading.voltage, 214.0);
     expect(reading.powerFactor, 0.58);
   });
+
+  group('progres impor', () {
+    EnergyHistoryBackfill backfillFilling(EnergyApiClient apiClient) =>
+        EnergyHistoryBackfill(database: database, apiClient: apiClient);
+
+    // 120 sampel memberi 3 laporan: 49, 99, dan 119. Angka 50 pertama tidak
+    // dilaporkan karena indeks berbasis nol dan laporan pertama jatuh di
+    // sampel ke-50.
+    List<Map<String, dynamic>> spreadSamples() {
+      final base = DateTime(2026, 9, 29, 8);
+      return [
+        for (var i = 0; i < 120; i++)
+          serverRow(
+            id: 5000 - i,
+            createdAt: base
+                .add(Duration(seconds: 5 * i))
+                .toIso8601String()
+                .substring(0, 19),
+            energy: 0.20 + 0.00001 * i,
+          ),
+      ];
+    }
+
+    test('tahap pengambilan lebih dulu, lalu tahap impor', () async {
+      final apiClient = clientServing([spreadSamples()]);
+      addTearDown(apiClient.close);
+
+      final phases = <BackfillPhase>[];
+      await backfillFilling(apiClient).run(
+        Uri.parse('http://server:5000/api/data'),
+        now: DateTime(2026, 9, 29, 13),
+        onProgress: (progress) => phases.add(progress.phase),
+      );
+
+      // Urutannya penting: UI menampilkan tahap pengambilan sampai totalnya
+      // diketahui, lalu melompat ke tahap impor yang punya total.
+      expect(phases.first, BackfillPhase.fetching);
+      expect(phases.last, BackfillPhase.importing);
+      expect(phases, orderedEquals([
+        BackfillPhase.fetching,
+        BackfillPhase.fetching,
+        BackfillPhase.importing,
+        BackfillPhase.importing,
+        BackfillPhase.importing,
+        BackfillPhase.importing,
+      ]));
+    });
+
+    test('tahap pengambilan tidak mengarang total', () async {
+      final apiClient = clientServing([spreadSamples()]);
+      addTearDown(apiClient.close);
+
+      final fetching = <BackfillProgress>[];
+      await backfillFilling(apiClient).run(
+        Uri.parse('http://server:5000/api/data'),
+        now: DateTime(2026, 9, 29, 13),
+        onProgress: (progress) {
+          if (progress.phase == BackfillPhase.fetching) {
+            fetching.add(progress);
+          }
+        },
+      );
+
+      // Jumlah halaman tidak diketahui sampai server berhenti mengirim halaman
+      // penuh, jadi menampilkan "x dari y" pada tahap ini berarti mengarang y.
+      expect(fetching, isNotEmpty);
+      expect(fetching.every((progress) => progress.total == null), isTrue);
+      expect(fetching.every((progress) => progress.fraction == null), isTrue);
+    });
+
+    test('tahap impor memakai total sebenarnya dan berakhir di 100 persen',
+        () async {
+      final apiClient = clientServing([spreadSamples()]);
+      addTearDown(apiClient.close);
+
+      final importing = <BackfillProgress>[];
+      await backfillFilling(apiClient).run(
+        Uri.parse('http://server:5000/api/data'),
+        now: DateTime(2026, 9, 29, 13),
+        onProgress: (progress) {
+          if (progress.phase == BackfillPhase.importing) {
+            importing.add(progress);
+          }
+        },
+      );
+
+      expect(importing, isNotEmpty);
+      expect(importing.every((p) => p.total == 120), isTrue);
+      expect(importing.first.samples, 0);
+      expect(importing.last.samples, 120);
+      expect(importing.last.fraction, 1.0);
+      // Monoton naik: kalau tidak, bar progres bisa mundur di tengah jalan.
+      for (var i = 1; i < importing.length; i++) {
+        expect(importing[i].samples, greaterThan(importing[i - 1].samples));
+      }
+    });
+
+    test('baris yang tidak terbaca tidak ikut dihitung sebagai progres',
+        () async {
+      // Sampel dengan timestamp rusak dan angka yang tidak valid dilewati saat
+      // parsing, sebelum total dihitung. Kalau ikut dihitung, bar akan bergerak
+      // lalu berhenti sebelum 100 persen dan terlihat macet.
+      final apiClient = clientServing([
+        [
+          serverRow(id: 3, createdAt: '2026-09-29T08:00:00'),
+          serverRow(id: 2, createdAt: 'bukan tanggal'),
+          {
+            ...serverRow(id: 1, createdAt: '2026-09-29T07:00:00'),
+            'power': 'tidak angka',
+          },
+        ],
+      ]);
+      addTearDown(apiClient.close);
+
+      final importing = <BackfillProgress>[];
+      await backfillFilling(apiClient).run(
+        Uri.parse('http://server:5000/api/data'),
+        now: DateTime(2026, 9, 29, 13),
+        onProgress: (progress) {
+          if (progress.phase == BackfillPhase.importing) {
+            importing.add(progress);
+          }
+        },
+      );
+
+      expect(importing, isNotEmpty);
+      expect(importing.every((p) => p.total == 1), isTrue);
+      expect(importing.last.samples, 1);
+      expect(importing.last.fraction, 1.0);
+    });
+
+    test('server kosong tidak dilaporkan gagal', () async {
+      final apiClient = clientServing([[]]);
+      addTearDown(apiClient.close);
+
+      final phases = <BackfillPhase>[];
+      final result = await backfillFilling(apiClient).run(
+        Uri.parse('http://server:5000/api/data'),
+        now: DateTime(2026, 9, 29, 13),
+        onProgress: (progress) => phases.add(progress.phase),
+      );
+
+      expect(result.samples, 0);
+      expect(phases, [BackfillPhase.fetching]);
+    });
+  });
 }

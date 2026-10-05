@@ -2,12 +2,16 @@ import 'package:drift/native.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:smart_energy/data/local/app_database.dart';
 import 'package:smart_energy/models/energy_hourly.dart';
 import 'package:smart_energy/models/energy_period_summary.dart';
+import 'package:smart_energy/providers/energy_data_provider.dart';
 import 'package:smart_energy/providers/energy_history_provider.dart';
 import 'package:smart_energy/screens/analytics_screen.dart';
+import 'package:smart_energy/services/energy_api_client.dart';
 import 'package:smart_energy/services/energy_history_service.dart';
 
 /// Mengembalikan batang consumption chart beserta sumbu Y-nya.
@@ -60,8 +64,19 @@ void main() {
     final history = EnergyHistoryProvider(service: service);
     await history.select(HistoryPeriod.day, now: now);
     await tester.pumpWidget(
-      ChangeNotifierProvider<EnergyHistoryProvider>.value(
-        value: history,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<EnergyHistoryProvider>.value(value: history),
+          // Kartu impor riwayat di bawah grafik membaca status impor dari
+          // provider ini, jadi layar tidak bisa dirakit tanpa-nya.
+          ChangeNotifierProvider<EnergyDataProvider>(
+            create: (_) => EnergyDataProvider(
+              apiClient: EnergyApiClient(
+                client: MockClient((_) async => http.Response('[]', 200)),
+              ),
+            ),
+          ),
+        ],
         child: const MaterialApp(home: Scaffold(body: AnalyticsScreen())),
       ),
     );

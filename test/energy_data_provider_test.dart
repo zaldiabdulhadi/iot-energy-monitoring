@@ -10,6 +10,7 @@ import 'package:smart_energy/providers/energy_data_provider.dart';
 import 'package:smart_energy/providers/history_invalidator.dart';
 import 'package:smart_energy/services/energy_api_client.dart';
 import 'package:smart_energy/services/energy_recorder.dart';
+import 'package:smart_energy/services/energy_server_discovery.dart';
 
 /// Menunggu sampai [condition] terpenuhi, atau gagal setelah [timeout].
 ///
@@ -270,6 +271,190 @@ void main() {
         afterDisconnect,
         reason: 'timer percobaan ulang harus berhenti saat disconnect',
       );
+    });
+
+    test('alamat tersimpan yang sudah tidak berlaku memicu penyapuan lagi',
+        () async {
+      // DHCP sering memindahkan collector ke IP lain setelah semalaman. Kalau
+      // retry hanya menembak alamat lama, aplikasi tidak akan pernah pulih
+      // walau alamat yang benar sedang hidup di jaringan.
+      final database = EnergyDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+      await saveEndpoint(database, savedEndpoint);
+
+      var scans = 0;
+      final discovery = EnergyServerDiscovery(
+        candidates: () async => const ['192.168.1.44'],
+        client: MockClient((_) async {
+          scans++;
+          return http.Response(
+            jsonEncode({
+              'status': 'ok',
+              'service': EnergyServerDiscovery.serviceName,
+              'rows': 11416,
+              'last_seen': '2026-10-05T00:00:35',
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(discovery.close);
+
+      final client = MockClient((request) async {
+        // Alamat lama tidak menjawab; yang baru menjawab seperti collector.
+        if (request.url.host != '192.168.1.44') {
+          throw http.ClientException('connection refused', request.url);
+        }
+        return _reading();
+      });
+      final provider = EnergyDataProvider(
+        apiClient: EnergyApiClient(client: client),
+        database: database,
+        discovery: discovery,
+        pollInterval: const Duration(milliseconds: 10),
+      );
+      addTearDown(provider.dispose);
+
+      await provider.autoConnect();
+      expect(provider.connected, isFalse);
+
+      await _waitUntil(
+        () => provider.connected,
+        'alamat tersimpan tidak pernah ditinggalkan untuk penyapuan ulang',
+      );
+
+      expect(scans, greaterThanOrEqualTo(1));
+      expect(provider.endpoint?.host, '192.168.1.44');
+      // Alamat baru harus ikut tersimpan, supaya launch berikutnya langsung
+      // jatuh ke jalur cepat tanpa menyapu 253 host lagi.
+      final device = await database.select(database.localDevices).getSingle();
+      expect(device.endpoint, contains('192.168.1.44'));
+    });
+
+    test('penyapuan yang gagal tidak dianggap sebagai error koneksi',
+        () async {
+      // Tidak ketemu collector itu kondisi jaringan, bukan kegagalan aplikasi.
+      // Kalau errornya diisi, UI akan menampilkan "Koneksi terputus" padahal
+      // yang terjadi aplikasi sedang mencari dan belum menemukan.
+      final database = EnergyDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+
+      final discovery = EnergyServerDiscovery(
+        candidates: () async => const ['192.168.1.44'],
+        client: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(discovery.close);
+
+      var seenDuringScan = false;
+      final provider = EnergyDataProvider(
+        apiClient: EnergyApiClient(client: MockClient((_) async => _reading())),
+        database: database,
+        discovery: discovery,
+        pollInterval: const Duration(milliseconds: 10),
+      );
+      provider.addListener(() {
+        if (provider.discovering) seenDuringScan = true;
+      });
+      addTearDown(provider.dispose);
+
+      await provider.discoverAndConnect();
+
+      expect(provider.discovering, isFalse);
+      expect(provider.connected, isFalse);
+      // Error aplikasi dibiarkan kosong supaya yang tampil tetap "Mode demo
+      // aktif". Ganti dengan pesan "Koneksi terputus" akan menyalahkan pengguna
+      // atas sesuatu yang belum terjadi: alamatnya saja yang belum ketemu.
+      expect(provider.error, isNull);
+      expect(seenDuringScan, isTrue, reason: 'UI perlu tahu saat menyapu');
+    });
+
+    test('penyapuan kedua ditahan sampai cooldown habis', () async {
+      final database = EnergyDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+
+      var scans = 0;
+      final discovery = EnergyServerDiscovery(
+        candidates: () async => const ['192.168.1.44'],
+        client: MockClient((_) async {
+          scans++;
+          return http.Response('', 404);
+        }),
+      );
+      addTearDown(discovery.close);
+
+      final provider = EnergyDataProvider(
+        apiClient: EnergyApiClient(client: MockClient((_) async => _reading())),
+        database: database,
+        discovery: discovery,
+        // Cooldown nol supaya test tidak menunggu beberapa detik hanya untuk
+        // membuktikan bahwa penyapuan kedua benar-benar ditahan.
+        discoveryCooldown: Duration.zero,
+      );
+      addTearDown(provider.dispose);
+
+      await provider.discoverAndConnect();
+      await provider.discoverAndConnect();
+      await provider.discoverAndConnect();
+
+      expect(scans, 3, reason: 'cooldown nol harus membiarkan tiap panggilan');
+
+      final blocking = EnergyDataProvider(
+        apiClient: EnergyApiClient(client: MockClient((_) async => _reading())),
+        database: database,
+        discovery: discovery,
+      );
+      addTearDown(blocking.dispose);
+      await blocking.discoverAndConnect();
+      final afterOne = scans;
+      await blocking.discoverAndConnect();
+      await blocking.discoverAndConnect();
+
+      expect(
+        scans,
+        afterOne,
+        reason: 'cooldown default menahan 254 request per menit',
+      );
+
+      // `force` dipakai tombol "Cari lagi", jadi harus menembus cooldown.
+      await blocking.discoverAndConnect(force: true);
+      expect(scans, afterOne + 1);
+    });
+
+    test('alamat yang diketik pengguna tidak dibuang diam-diam', () async {
+      final database = EnergyDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+
+      var scans = 0;
+      final discovery = EnergyServerDiscovery(
+        candidates: () async => const [],
+        client: MockClient((_) async {
+          scans++;
+          return http.Response('{}', 404);
+        }),
+      );
+      addTearDown(discovery.close);
+
+      final provider = EnergyDataProvider(
+        apiClient: EnergyApiClient(
+          client: MockClient((_) async => http.Response('{}', 503)),
+        ),
+        database: database,
+        discovery: discovery,
+        pollInterval: const Duration(milliseconds: 10),
+      );
+      addTearDown(provider.dispose);
+
+      await provider.connect(
+        endpoint: Uri.parse('http://10.0.0.5:5000/api/data'),
+        manual: true,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      // Kalau diketik manual lalu gagal, itu kesalahan yang harus diperbaiki di
+      // layar pengaturan. Menghapusnya diam-diam lalu menyapu jaringan akan
+      // menutupi penyebabnya dan membuang input pengguna.
+      expect(provider.endpoint?.host, '10.0.0.5');
+      expect(scans, 0);
     });
 
     test('kegagalan dari tombol manual tidak menyisakan percobaan otomatis',

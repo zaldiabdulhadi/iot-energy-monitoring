@@ -64,10 +64,17 @@ class EnergyApiClient {
   /// dan oleh ekspor sampel mentah (agar berkas CSV berisi data yang sama
   /// persis dengan `server/data.db`). Server mengembalikan `id` menurun, dan
   /// paging berhenti begitu ada halaman kosong/pendek atau loop.
+  ///
+  /// [onPage] dipanggil tiap kali satu halaman diterima, supaya pemanggil bisa
+  /// menampilkan kemajuan. Total halaman tidak diketahui di muka karena server
+  /// tidak melaporkan jumlah baris, jadi yang diteruskan adalah nomor halaman dan
+  /// jumlah baris yang sudah terkumpul. Riwayat `data.db` bisa ribuan baris,
+  /// jadi tanpa laporan ini prosesnya berjalan lama tanpa satu pun indikasi.
   Future<List<Map<String, dynamic>>> fetchAllHistory(
     Uri endpoint, {
     int limit = 500,
     int maxPages = 200,
+    void Function(int page, int collected)? onPage,
   }) async {
     final collected = <Map<String, dynamic>>[];
     int? beforeId;
@@ -91,14 +98,17 @@ class EnergyApiClient {
           .toList();
       if (ids.isEmpty) {
         collected.addAll(page);
+        onPage?.call(pages, collected.length);
         break;
       }
       if (ids.length < page.length) {
         collected.addAll(page);
+        onPage?.call(pages, collected.length);
         break;
       }
 
       collected.addAll(page);
+      onPage?.call(pages, collected.length);
       final oldest = ids.reduce((a, b) => a < b ? a : b);
       if (beforeId != null && oldest >= beforeId) break;
       beforeId = oldest;
@@ -118,6 +128,9 @@ class EnergyApiClient {
           .get(endpoint, headers: _headersFor(endpoint))
           .timeout(timeout);
       if (response.statusCode != 200) {
+        // `server/app.py` sekarang membuka GET tanpa kunci, jadi 401 hanya
+        // muncul kalau aplikasi menunjuk server versi lama. Pesannya
+        // dipertahankan karena itu masih diagnosis yang benar.
         throw EnergyApiException(
           response.statusCode == 401
               ? 'API ESP menolak kunci. Cek api_key pada URL.'

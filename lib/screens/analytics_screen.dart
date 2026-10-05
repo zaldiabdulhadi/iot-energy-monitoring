@@ -8,6 +8,7 @@ import '../providers/energy_data_provider.dart';
 import '../providers/energy_history_provider.dart';
 import '../services/energy_api_client.dart';
 import '../services/energy_csv_exporter.dart';
+import '../services/energy_history_backfill.dart';
 import '../services/energy_raw_csv_exporter.dart';
 import '../theme/app_colors.dart';
 import '../widgets/insight_card.dart';
@@ -28,6 +29,58 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   EnergyMetric _chartMetric = EnergyMetric.power;
   bool _exporting = false;
   bool _exportingRaw = false;
+
+  /// Menjalankan impor riwayat dari server atas permintaan pengguna.
+  ///
+  /// Impor otomatis sudah berjalan sekali setelah koneksi pertama berhasil, tapi
+  /// kegagalannya diam-diam dan tidak pernah diulang. Tombol ini jalanannya:
+  /// dipakai setelah server sempat mati, setelah ganti jaringan, atau kalau
+  /// pemeriksa ingin memuat ulang `data.db` yang sudah bertambah banyak.
+  Future<void> _import() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final provider = context.read<EnergyDataProvider>();
+
+    if (provider.importState == HistoryImportState.running) return;
+    if (!provider.connected) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Belum ada server terhubung. Tunggu sampai aplikasi menemukan '
+            'collector di jaringan.',
+          ),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    setState(() {});
+    final result = await provider.importHistoryNow();
+
+    if (!mounted) return;
+    if (result == null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(provider.importError ?? 'Impor riwayat gagal.'),
+          backgroundColor: AppColors.critical,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          result.isEmpty
+              ? 'Server belum punya riwayat untuk diimpor.'
+              : '${result.samples} sampel masuk, ${result.hours} jam tercatat.',
+        ),
+        backgroundColor: result.isEmpty ? AppColors.warning : AppColors.success,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   /// Menulis riwayat periode terpilih ke Downloads lalu membuka lembar bagikan.
   ///
@@ -236,6 +289,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         ],
         const SizedBox(height: 18),
         const SectionHeader(
+          title: 'Riwayat dari server',
+          icon: Icons.cloud_download_rounded,
+        ),
+        const SizedBox(height: 10),
+        _ImportCard(onImport: _import),
+        const SizedBox(height: 18),
+        const SectionHeader(
           title: 'Unduh data',
           icon: Icons.download_rounded,
         ),
@@ -249,6 +309,198 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         ),
       ],
     );
+  }
+}
+
+/// Menarik riwayat mentah yang menumpuk di `server/data.db` ke perangkat.
+///
+/// Setiap layar di atas membaca `hourly_history`, sedangkan server menyimpan
+/// sampel mentah tiap beberapa detik. Tanpa jembatan ini, semua yang sudah
+/// tercatat di server tidak akan pernah muncul di grafik.
+///
+///Tombol ini bukan satu-satunya jalurnya: impor otomatis berjalan sekali
+/// setelah koneksi pertama berhasil. Yang ditambah di sini adalah kemampuan
+/// mengulang dan melihat kemajuannya, karena impor berjalan ribuan sampel di
+/// balik layar dan kegagalan sebelumnya tidak pernah terlihat.
+class _ImportCard extends StatelessWidget {
+  const _ImportCard({required this.onImport});
+
+  final VoidCallback onImport;
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<EnergyDataProvider>();
+    final running = provider.importState == HistoryImportState.running;
+    final progress = provider.importProgress;
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Meterai riwayat dari server',
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Server menyimpan satu baris tiap beberapa detik. Riwayat yang '
+            'sudah ada di sana bisa dimasukkan ke grafik di atas, supaya tidak '
+            'harus membiarkan aplikasi merekam sendiri selama berhari-hari.',
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.45,
+              color: AppColors.textMuted,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _statusLine(provider, progress, running),
+          if (running) ...[
+            const SizedBox(height: 12),
+            _progressBar(progress),
+          ],
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: running ? null : onImport,
+              icon: running
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.cloud_download_rounded, size: 18),
+              label: Text(running ? 'Mengimpor…' : 'Meterai riwayat sekarang'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                textStyle: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Satu baris yang menjelaskan keadaan impor terakhir.
+  ///
+  /// Pesan kegagalan ditampilkan apa adanya, bukan diganti teks generik, jadi
+  /// 404, koneksi ditolak, dan JSON rusak masih bisa dibedakan oleh pengguna.
+  Widget _statusLine(
+    EnergyDataProvider provider,
+    BackfillProgress? progress,
+    bool running,
+  ) {
+    if (running) {
+      final detail = _detailOf(progress);
+      return _line(
+        icon: Icons.sync_rounded,
+        color: AppColors.primaryDark,
+        text: detail ?? 'Mengambil riwayat dari server…',
+      );
+    }
+
+    switch (provider.importState) {
+      case HistoryImportState.failed:
+        return _line(
+          icon: Icons.error_outline_rounded,
+          color: AppColors.critical,
+          text: provider.importError ?? 'Impor riwayat gagal.',
+        );
+      case HistoryImportState.done:
+        final result = provider.lastImportResult;
+        if (result == null || result.isEmpty) {
+          return _line(
+            icon: Icons.inbox_rounded,
+            color: AppColors.textSecondary,
+            text: 'Server belum punya riwayat yang bisa dimasukkan.',
+          );
+        }
+        return _line(
+          icon: Icons.check_circle_outline_rounded,
+          color: AppColors.success,
+          text:
+              '${result.samples} sampel · ${result.hours} jam tercatat'
+              '${_since(provider.lastImportAt)}',
+        );
+      case HistoryImportState.idle:
+      case HistoryImportState.running:
+        return _line(
+          icon: Icons.info_outline_rounded,
+          color: AppColors.textSecondary,
+          text: provider.connected
+              ? 'Belum ada impor manual. Riwayat akan masuk otomatis setelah '
+                  'server ditemukan.'
+              : 'Riwayat masuk otomatis begitu collector ditemukan di jaringan.',
+        );
+    }
+  }
+
+  /// Rincian yang sedang berjalan, dibuat berbeda untuk tiap tahap.
+  ///
+  /// Tahap `fetching` tidak punya total karena server tidak melaporkan jumlah
+  /// baris, jadi yang ditampilkan hanya jumlah baris yang sudah terkumpul.
+  static String? _detailOf(BackfillProgress? progress) {
+    if (progress == null) return null;
+    return switch (progress.phase) {
+      BackfillPhase.fetching => progress.samples <= 0
+          ? 'Mengambil halaman pertama…'
+          : 'Mengambil halaman · ${progress.samples} sampel terkumpul',
+      BackfillPhase.importing =>
+        'Memasukkan ${progress.samples} dari ${progress.total} sampel…',
+    };
+  }
+
+  Widget _progressBar(BackfillProgress? progress) {
+    final fraction = progress?.fraction;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: LinearProgressIndicator(
+        // Determinan begitu totalnya diketahui. Indeterminate dipakai di tahap
+        // pengambilan halaman, karena tidak ada total yang jujur untuk
+        // ditampilkan dan bar yang mengarang angka akan lebih buruk.
+        value: fraction,
+        minHeight: 6,
+      ),
+    );
+  }
+
+  static Widget _line({
+    required IconData icon,
+    required Color color,
+    required String text,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(fontSize: 11.5, height: 1.4, color: color),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Keterangan "berapa menit lalu" setelah hasil impor.
+  ///
+  /// Hanya untuk hasil sukses: keterangan waktu pada pesan error akan membuat
+  /// pesan itu terbaca seperti bukan kegagalan.
+  static String _since(DateTime? at) {
+    if (at == null) return '';
+    final elapsed = DateTime.now().difference(at);
+    if (elapsed.inMinutes >= 1) return ' · ${elapsed.inMinutes} menit lalu';
+    return ' · baru saja';
   }
 }
 
@@ -289,7 +541,7 @@ class _ExportCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             'Satu baris per jam: kWh, daya, tegangan, arus, frekuensi, dan '
-            'cakupan rekaman. Tersimpan di folder Download/SmartEnergy, lalu '
+            'cakupan rekaman. Tersimpan di folder Download/WattSerra, lalu '
             'dibagikan lewat lembar bagikan.',
             style: TextStyle(
               fontSize: 11.5,

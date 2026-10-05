@@ -14,6 +14,7 @@ import 'services/energy_csv_exporter.dart';
 import 'services/energy_history_service.dart';
 import 'services/energy_history_backfill.dart';
 import 'services/energy_recorder.dart';
+import 'services/energy_server_discovery.dart';
 import 'services/energy_sync_service.dart';
 import 'services/energy_api_client.dart';
 import 'services/energy_raw_csv_exporter.dart';
@@ -91,14 +92,31 @@ class SmartEnergyApp extends StatelessWidget {
               // Server collector menyimpan sampel mentah yang tidak pernah
               // masuk ke database lokal, jadi sekali koneksi pertama berhasil
               // seluruh riwayat itu ditarik masuk ke `hourly_history`.
+              //
+              // `pollInterval` di sini bukan 5 detik seperti polling live, dan
+              // itu disengaja. Nilai itu menentukan `maxGap` di
+              // `EnergyRecorder`, yaitu jarak sampel paling jauh yang masih
+              // dihitung energinya. ESP32 mengirim tiap 9-10 detik, jadi
+              // batas 15 detik dari angka 5 detik ikut membuang semua jeda
+              // 16-60 detik yang normal di dalam `data.db`; dengan 30 detik
+              // batasnya jadi 90 detik. Jeda lebih dari itu tidak ditebak,
+              // karena data yang hilang di sana adalah server yang mati,
+              // bukan quirk pencuplikan.
               backfill: EnergyHistoryBackfill(
                 database: database,
                 apiClient: apiClient,
-                pollInterval: const Duration(seconds: 5),
+                pollInterval: const Duration(seconds: 30),
               ),
+              // Alamat server berubah dari DHCP sewaktu-waktu, jadi aplikasi
+              // mencarinya sendiri di jaringan lokal lewat `/health` yang
+              // bertanda. Alamat yang ketemu langsung disimpan sebagai
+              // endpoint, jadi penyapuan hanya perlu berhasil sekali.
+              discovery: EnergyServerDiscovery(),
             )..startDemo();
-            // Ambil data perangkat otomatis begitu aplikasi dibuka, lalu ulangi
-            // percobaan tiap lima detik selama perangkat belum terjangkau.
+            // Ambil data perangkat otomatis begitu aplikasi dibuka: pakai
+            // endpoint tersimpan, atau cari collector di jaringan kalau belum
+            // pernah ada. Ulangi percobaan tiap lima detik selama perangkat
+            // belum terjangkau.
             unawaited(provider.autoConnect());
             return provider;
           },
@@ -119,7 +137,7 @@ class SmartEnergyApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
-        title: 'Smart Energy',
+        title: 'WattSerra',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         home: _LifecycleSyncListener(

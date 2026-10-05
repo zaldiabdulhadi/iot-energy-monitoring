@@ -2,12 +2,16 @@ import 'package:drift/native.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:smart_energy/data/local/app_database.dart';
 import 'package:smart_energy/models/energy_hourly.dart';
 import 'package:smart_energy/models/energy_period_summary.dart';
+import 'package:smart_energy/providers/energy_data_provider.dart';
 import 'package:smart_energy/providers/energy_history_provider.dart';
 import 'package:smart_energy/screens/analytics_screen.dart';
+import 'package:smart_energy/services/energy_api_client.dart';
 import 'package:smart_energy/services/energy_history_service.dart';
 
 /// Lebar label sumbu bawah yang benar-benar terender, diurutkan dari kiri.
@@ -90,12 +94,32 @@ void main() {
     }
   }
 
-  Future<void> showScreen(WidgetTester tester, HistoryPeriod period) async {
+  /// [now] harus sama dengan waktu [seedHistory] memakai.
+  ///
+  /// Tanpa itu `select` memakai `DateTime.now()`, periode "Hari" dan "Tahun"
+  /// tidak punya satu pun baris, dan seluruh assertions soal label lulus hampa:
+  /// tidak ada label yang bisa bertabrakan kalau memang tidak ada label.
+  Future<void> showScreen(
+    WidgetTester tester,
+    HistoryPeriod period,
+    DateTime now,
+  ) async {
     final history = EnergyHistoryProvider(service: service);
-    await history.select(period);
+    await history.select(period, now: now);
     await tester.pumpWidget(
-      ChangeNotifierProvider<EnergyHistoryProvider>.value(
-        value: history,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<EnergyHistoryProvider>.value(value: history),
+          // Kartu impor riwayat di bawah grafik membaca status impor dari
+          // provider ini, jadi layar tidak bisa dirakit tanpa-nya.
+          ChangeNotifierProvider<EnergyDataProvider>(
+            create: (_) => EnergyDataProvider(
+              apiClient: EnergyApiClient(
+                client: MockClient((_) async => http.Response('[]', 200)),
+              ),
+            ),
+          ),
+        ],
         child: const MaterialApp(home: Scaffold(body: AnalyticsScreen())),
       ),
     );
@@ -122,7 +146,7 @@ void main() {
 
           final now = DateTime(2026, 9, 29, 13);
           await seedHistory(now);
-          await showScreen(tester, period);
+          await showScreen(tester, period, now);
 
           for (final chart in [find.byType(BarChart), find.byType(LineChart)]) {
             final labels = bottomLabels(tester, chart);
@@ -145,8 +169,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    await seedHistory(DateTime(2026, 9, 29, 13));
-    await showScreen(tester, HistoryPeriod.day);
+    final now = DateTime(2026, 9, 29, 13);
+    await seedHistory(now);
+    await showScreen(tester, HistoryPeriod.day, now);
 
     final labels = bottomLabels(tester, find.byType(BarChart));
     expect(labels, isNotEmpty);
@@ -161,14 +186,24 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    await seedHistory(DateTime(2026, 9, 29, 13));
+    final now = DateTime(2026, 9, 29, 13);
+    await seedHistory(now);
     final history = EnergyHistoryProvider(service: service);
-    await history.select(HistoryPeriod.day);
+    await history.select(HistoryPeriod.day, now: now);
     await tester.pumpWidget(
       MediaQuery(
         data: const MediaQueryData(textScaler: TextScaler.linear(1.6)),
-        child: ChangeNotifierProvider<EnergyHistoryProvider>.value(
-          value: history,
+        child: MultiProvider(
+          providers: [
+            ChangeNotifierProvider<EnergyHistoryProvider>.value(value: history),
+            ChangeNotifierProvider<EnergyDataProvider>(
+              create: (_) => EnergyDataProvider(
+                apiClient: EnergyApiClient(
+                  client: MockClient((_) async => http.Response('[]', 200)),
+                ),
+              ),
+            ),
+          ],
           child: const MaterialApp(home: Scaffold(body: AnalyticsScreen())),
         ),
       ),

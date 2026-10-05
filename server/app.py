@@ -10,11 +10,19 @@ Jalanin:
 
 Endpoint:
     POST /api/data              -> dipanggil ESP32 (wajib API key)
-    GET  /api/data              -> liat data terakhir (wajib API key)
+    GET  /api/data              -> liat data terakhir (tanpa key)
                                   ?limit=500&before_id=123 buat ambil halaman
                                   riwayat yang lebih lama
     GET  /                      -> dashboard sederhana (tanpa key, auto refresh)
-    GET  /health                -> cek server hidup
+    GET  /health                -> cek server hidup + penanda collector
+
+Soal kunci pada GET:
+    POST wajib key karena itu satu-satunya jalur yang menulis ke `data.db`, jadi
+    siapa pun yang bisa menyalin saja tidak akan mengarang pengukuran. GET hanya
+    membaca, dan hanya dari perangkat yang sudah terhubung ke WiFi rumah yang
+    sama, jadi membukanya membuat aplikasi bisa menemukan collector-nya sendiri
+    tanpa pengguna mengetik URL dan api_key. Kalau suatu saat GET perlu ditutup
+    lagi, titik baliknya cuma `key_valid()` di `latest()`.
 """
 import hmac
 import os
@@ -24,7 +32,7 @@ from datetime import datetime
 from flask import Flask, g, jsonify, request
 
 app = Flask(__name__)
-
+    
 # Key sengaja dibuat pendek (<60 karakter) biar aman di EEPROM lama.
 # Bikin key acak:  python -c "import secrets; print(secrets.token_hex(16))"
 #
@@ -41,8 +49,17 @@ if not API_KEY:
     )
 DB_PATH = os.environ.get("DB_PATH", "data.db")
 
-# False = ESP32 boleh POST tanpa header key (firmware lama). GET tetap wajib key.
+# False = ESP32 boleh POST tanpa header key (firmware lama).
 REQUIRE_KEY_POST = False
+
+# Penanda yang dibaca aplikasi saat mencari collector di jaringan.
+#
+# Aplikasi menyapu /24 dan memeriksa setiap host yang menjawab di port 5000.
+# Tanpa nilai ini, backend atau layanan lain yang kebetulan memakai port yang
+# sama akan dianggap sebagai collector ini, dan aplikasi diam-diam membaca
+# JSON yang salah format. `service` harus persis cocok, bukan "!=", supaya
+# penanda baru di versi berikutnya tidak ikut diterima.
+SERVICE_NAME = "wattserra-collector"
 
 FIELDS = ["voltage", "current", "power", "energy", "frequency", "pf"]
 
@@ -93,10 +110,16 @@ def key_valid():
 
 
 def deny():
-    """Balas 401 + cetak key yang diterima, biar kelihatan header nyampe atau nggak."""
+    """Balas 401 + catat header yang benar-benar sampai, tanpa mencetak kunci.
+
+    Versi sebelumnya ikut mencetak empat karakter pertama key yang benar,
+    jadi setiap 401 menaruh sebagian key asli di log terminal, dan log itu
+    sering ikut ter-*commit* atau tersalin ke lampiran laporan. Yang diperlukan
+    cuma bisa atau tidaknya header auth sampai, dan itu sudah terlihat dari
+    daftar nama header di bawah.
+    """
     got = extract_key()
-    print(f"[401] key diterima: panjang={len(got)} awal='{got[:4]}' | "
-          f"key server: panjang={len(API_KEY)} awal='{API_KEY[:4]}' | "
+    print(f"[401] key diterima: panjang={len(got)} | "
           f"header: {[h for h in request.headers.keys() if h.lower() in ('authorization', 'x-api-key', 'apikey')]}",
           flush=True)
     return jsonify(error="API key salah atau tidak ada"), 401
@@ -105,7 +128,24 @@ def deny():
 # ---------- Routes ----------
 @app.route("/health")
 def health():
-    return jsonify(status="ok")
+    """Menjawab dengan penanda collector supaya aplikasi bisa menemukannya.
+
+    Aplikasi mencari collector dengan menyapu /24 dan memeriksa setiap host
+    yang menjawab di port ini, jadi balasannya harus bisa dibedakan dari
+    layanan lain. `rows` sengaja memakai `MAX(id)`, bukan `COUNT(*)`: keduanya
+    sama-sama tidak perlu indeks tambahan, tapi `MAX(id)` berhenti di kunci
+    utama sedangkan `COUNT(*)` membaca seluruh tabel, dan endpoint ini bisa
+    dipanggil 254 kali dalam satu kali penyapuan.
+
+    `last_seen` nullable karena `data.db` masih boleh kosong.
+    """
+    newest = get_db().execute("SELECT MAX(id), MAX(created_at) FROM pzem").fetchone()
+    return jsonify(
+        status="ok",
+        service=SERVICE_NAME,
+        rows=newest["MAX(id)"] or 0,
+        last_seen=newest["MAX(created_at)"],
+    )
 
 
 @app.route("/api/data", methods=["POST"])
@@ -140,8 +180,9 @@ def receive():
 
 @app.route("/api/data", methods=["GET"])
 def latest():
-    if not key_valid():
-        return deny()
+    # Tidak mewajibkan key: lihat catatan di docstring modul. Pembacaan tidak
+    # menulis apa pun, dan aplikasi memakai endpoint ini untuk menemukan
+    # collector-nya sendiri tanpa pengguna mengetik api_key.
     limit = min(request.args.get("limit", 20, type=int), 500)
     # before_id bikin aplikasi bisa jalanin seluruh riwayat: halaman berikutnya
     # meminta id yang lebih kecil dari baris terakhir halaman ini.
@@ -208,4 +249,5 @@ init_db()
 
 if __name__ == "__main__":
     # host 0.0.0.0 wajib supaya ESP32 (device lain di WiFi) bisa akses
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=False)

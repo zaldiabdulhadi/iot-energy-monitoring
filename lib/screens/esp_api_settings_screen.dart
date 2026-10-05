@@ -107,7 +107,7 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
     }
 
     await _saveEndpoint(endpoint.toString());
-    await provider.connect(endpoint: endpoint);
+    await provider.connect(endpoint: endpoint, manual: true);
     if (mounted && provider.error != null) {
       _showError(provider.error!);
     }
@@ -251,7 +251,7 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
                         : AppColors.critical,
                   ),
                 ),
-                if (provider.connectedSince != null) ...[
+if (provider.connectedSince != null) ...[
                   const SizedBox(height: 2),
                   Text(
                     'Terhubung ${_elapsed(provider.connectedSince!)}',
@@ -268,6 +268,34 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
                       fontSize: 11.5,
                       color: AppColors.textMuted,
                     ),
+                  ),
+                ],
+                // Dibedakan dari "Mode demo aktif": sedang menyapu jaringan
+                // sama sekali berbeda dari sudah menyerah mencarinya.
+                if (provider.discovering) ...[
+                  const SizedBox(height: 4),
+                  const Row(
+                    children: [
+                      SizedBox(
+                        width: 11,
+                        height: 11,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.primaryDark,
+                        ),
+                      ),
+                      SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'Mencari collector di jaringan…',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primaryDark,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ],
@@ -316,7 +344,7 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
     );
   }
 
-  Widget _buildConfigForm(EnergyDataProvider provider) {
+Widget _buildConfigForm(EnergyDataProvider provider) {
     final connectionActive = provider.connected || !provider.demoMode;
 
     return Column(
@@ -325,8 +353,8 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
         Padding(
           padding: const EdgeInsets.only(left: 6, bottom: 8),
           child: Text(
-            'Konfigurasi API',
-            style: const TextStyle(
+            'Pengaturan lanjutan (opsional)',
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
               color: AppColors.textMuted,
@@ -345,6 +373,18 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
+                'Biasanya tidak perlu diisi apa pun. Aplikasi mencari collector '
+                'di jaringan WiFi sendiri dan mengingat alamatnya. Kolom di bawah '
+                'hanya untuk server di port berbeda atau jaringan yang memblokir '
+                'pencarian.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  height: 1.5,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
                 'Endpoint API',
                 style: TextStyle(
                   fontSize: 12.5,
@@ -359,7 +399,7 @@ class _EspApiSettingsScreenState extends State<EspApiSettingsScreen>
                 keyboardType: TextInputType.url,
                 autocorrect: false,
                 decoration: const InputDecoration(
-                  hintText: 'http://192.168.1.19:5000/api/data?api_key=...',
+                  hintText: 'http://192.168.1.19:5000/api/data',
                 ),
               ),
               const SizedBox(height: 16),
